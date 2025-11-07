@@ -3,6 +3,7 @@ import json
 import streamlit as st
 from character import Character, Item, default_slots
 from equipment_data import sample_equipment
+from phase2.ui import phase2_ui
 
 st.set_page_config(page_title="AvaSim — Character Builder", layout="wide")
 
@@ -42,7 +43,7 @@ with st.sidebar.expander("Save / Load Character", expanded=True):
             payload = json.load(uploaded)
             st.session_state.char = Character.from_dict(payload)
             char = st.session_state.char
-            st.success(f"Loaded character '{char.name or 'Unnamed'}'")
+            st.success(f"Loaded character '{char.name or 'Unnamed'}'\n")
             st.experimental_rerun()
         except Exception as e:
             st.error(f"Failed to load character: {e}")
@@ -186,18 +187,10 @@ elif menu == "Equipment":
         st.subheader("Effective Stats (base + equipment)")
         st.table(char.effective_stats())
 
-# --- Phase 2 placeholder ---
-elif menu == "Phase 2 (placeholder)":
-    st.header("Phase 2 — Combat Simulator (placeholder)")
-    st.info("This area will host the Phase 2 combat simulator. For now it shows a preview of the character snapshot.")
-    st.write("Current character snapshot that Phase 2 will read:")
-    st.json(char.to_dict())
-
-    if st.button("Run placeholder 'simulate'"):
-        eff = char.effective_stats()
-        attack_score = eff.get("strength", 0) + char.level * 2
-        defense_score = eff.get("vitality", 0) + char.level
-        st.success(f"Placeholder simulation result — Attack: {attack_score}, Defense: {defense_score}")
+# --- Phase 2 integration ---
+elif menu == "Phase 2 (placeholder):"
+    # Delegate to the phase2 UI integration
+    phase2_ui()
 
 st.sidebar.markdown("---")
 st.sidebar.write("AvaSim · Streamlit UI")
