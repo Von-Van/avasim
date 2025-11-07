@@ -145,7 +145,7 @@ class Character:
         self.action_count: int = 2  # Default actions per turn
         
         # Current state (for future combat)
-        self.current_hp: int = self.get_max_hp()
+        self.current_hp: int = self.base_hp + self.hp_modifier
         
     def get_stat(self, stat_name: str) -> int:
         """
@@ -395,11 +395,11 @@ class Character:
         if item not in self.equipped_items:
             self.equipped_items.append(item)
             
-            # Update current HP if max HP changed
-            old_max = self.get_max_hp()
-            new_max = old_max + item.hp_modifier
-            if new_max > old_max:
-                self.current_hp += (new_max - old_max)
+            # Update current HP if max HP increased
+            new_max_hp = self.get_max_hp()
+            hp_increase = item.hp_modifier
+            if hp_increase > 0:
+                self.current_hp += hp_increase
         
         return True
     

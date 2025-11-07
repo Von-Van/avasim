@@ -6,6 +6,8 @@ This script demonstrates the core features of the character simulator,
 including character creation, backgrounds, equipment, XP spending, and persistence.
 """
 
+import os
+import tempfile
 from avasim import Character, ITEMS, BACKGROUNDS, create_character
 
 
@@ -142,8 +144,9 @@ def example_6_save_and_load():
     print(char.get_character_sheet())
     print()
     
-    # Save to file
-    filename = "/tmp/zara_stormcaller.json"
+    # Save to file using temp directory
+    temp_dir = tempfile.gettempdir()
+    filename = os.path.join(temp_dir, "zara_stormcaller.json")
     print(f"Saving character to {filename}...")
     char.save_to_file(filename)
     print("Character saved successfully!")
@@ -166,6 +169,12 @@ def example_6_save_and_load():
     print(f"  Skills match: {char.base_skills == loaded_char.base_skills}")
     print(f"  Equipped items match: {len(char.equipped_items) == len(loaded_char.equipped_items)}")
     print()
+    
+    # Clean up
+    try:
+        os.unlink(filename)
+    except:
+        pass
 
 
 def example_7_all_backgrounds():

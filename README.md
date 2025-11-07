@@ -32,6 +32,9 @@ char = Character(name="Aria")
 # Apply a background
 char.apply_background("Soldier")
 
+# Add some XP first
+char.add_xp(20)
+
 # Spend XP to improve stats
 char.spend_xp_on_stat("Strength", 1)
 char.spend_xp_on_skill("Strength", "Athletics", 1)
@@ -71,7 +74,7 @@ Action checks use 2d10 + Stat + Skill modifiers.
 ## Testing
 
 ```bash
-python -m pytest tests/
+python -m unittest tests
 ```
 
 ## License
