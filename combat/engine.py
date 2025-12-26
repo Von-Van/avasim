@@ -4,7 +4,7 @@ from .map import TacticalMap
 from .items import Weapon, Armor, Shield, AVALORE_WEAPONS
 from .feats import Feat
 from .spells import Spell
-from .enums import RangeCategory, ShieldType, ArmorCategory, StatusEffect
+from .enums import RangeCategory, ShieldType, ArmorCategory, StatusEffect, TerrainType
 from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6
 
 class AvaCombatEngine:
@@ -14,6 +14,7 @@ class AvaCombatEngine:
         self.turn_order: List[CombatParticipant] = []
         self.current_turn_index = 0
         self.combat_log: List[str] = []
+        self.map_log: List[str] = []
         self.party_initiated: bool = False
         self.environment_underwater: bool = False
         self.environment_darkness: bool = False
@@ -46,6 +47,42 @@ class AvaCombatEngine:
         self.combat_log.append(message)
         print(message)
 
+    def _log_map_state(self, label: str = "Map state") -> None:
+        if not self.tactical_map:
+            return
+        rows: list[str] = []
+        for y in range(self.tactical_map.height):
+            line_chars: list[str] = []
+            for x in range(self.tactical_map.width):
+                tile = self.tactical_map.get_tile(x, y)
+                if tile and tile.occupant and isinstance(tile.occupant, CombatParticipant):
+                    name = getattr(tile.occupant.character, "name", "?") or "?"
+                    line_chars.append(name[0].upper())
+                else:
+                    terrain = tile.terrain_type if tile else TerrainType.WALL
+                    if terrain == TerrainType.WALL:
+                        line_chars.append("#")
+                    elif terrain == TerrainType.FOREST:
+                        line_chars.append("f")
+                    elif terrain == TerrainType.WATER:
+                        line_chars.append("~")
+                    elif terrain == TerrainType.MOUNTAIN:
+                        line_chars.append("^")
+                    elif terrain == TerrainType.ROAD:
+                        line_chars.append("=")
+                    else:
+                        line_chars.append(".")
+            rows.append("".join(line_chars))
+        legend_parts = []
+        for p in self.participants:
+            if not hasattr(p, "position"):
+                continue
+            legend_parts.append(f"{p.character.name} @ {p.position[0]},{p.position[1]}")
+            self.map_log.append(f"{label} (Round {self.round}, Turn {self.current_turn_index + 1})")
+            self.map_log.extend(rows)
+        if legend_parts:
+                self.map_log.append("Legend: " + "; ".join(legend_parts))
+
     def get_distance(self, p1: CombatParticipant, p2: CombatParticipant) -> int:
         if not self.tactical_map:
             return 1
@@ -76,6 +113,7 @@ class AvaCombatEngine:
         self.round = 1
         if self.turn_order:
             self.turn_order[0].start_turn()
+            self._log_map_state("Start of combat")
 
     def get_current_participant(self) -> Optional[CombatParticipant]:
         if not self.turn_order:
@@ -91,6 +129,7 @@ class AvaCombatEngine:
         nxt = self.get_current_participant()
         if nxt:
             nxt.start_turn()
+            self._log_map_state(f"Start turn: {nxt.character.name}")
 
     def _ensure_weapon_ready(self, attacker: CombatParticipant, weapon: Weapon) -> bool:
         if weapon.draw_time > 0 and attacker.drawn_weapon != weapon.name:
@@ -113,6 +152,13 @@ class AvaCombatEngine:
         allow_death_save = True if allow_death_save_override is None else allow_death_save_override
         if not self._ensure_can_act(attacker):
             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+        if getattr(attacker, "sentinel_needs_lift", False) and weapon.name in {"Spear", "Polearm", "Javelin"}:
+            if attacker.actions_remaining < 1:
+                self.log(f"{attacker.character.name} needs 1 action to ready {weapon.name} after Sentinel and lacks the actions.")
+                return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            attacker.actions_remaining -= 1
+            attacker.sentinel_needs_lift = False
+            self.log(f"{attacker.character.name} spends 1 action to re-lift {weapon.name} after Sentinel.")
         attacker.last_hit_success = False
         if not self._ensure_weapon_ready(attacker, weapon):
             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
@@ -199,18 +245,7 @@ class AvaCombatEngine:
                 if defender.has_feat("Quickfooted"):
                     self.apply_knockback(defender, 2, source_pos=attacker.position, source_name=defender.character.name)
                 if defender.has_feat("Reactive Stance"):
-                    wep = defender.weapon_main or AVALORE_WEAPONS["Unarmed"]
-                    if wep.name == "Unarmed":
-                        in_range = True
-                        if self.tactical_map:
-                            dist = self.tactical_map.manhattan_distance(defender.position[0], defender.position[1], attacker.position[0], attacker.position[1])
-                            in_range = dist <= 1
-                        if in_range:
-                            self.log(f"{defender.character.name} uses Reactive Stance to shove!")
-                            prev_actions = defender.actions_remaining
-                            self.action_shove(defender, attacker)
-                            defender.actions_remaining = prev_actions
-                            defender.reactive_maneuver_used = True
+                    self._reactive_maneuver(defender, attacker)
                 if defender.flowing_stance and weapon.range_category in {RangeCategory.MELEE, RangeCategory.SKIRMISHING}:
                     alt_targets = [p for p in self.participants if p is not defender and p is not attacker and p.current_hp > 0]
                     if self.tactical_map:
@@ -436,6 +471,7 @@ class AvaCombatEngine:
         if defender.has_feat("Sentinel") and defender.weapon_main and defender.weapon_main.name in {"Spear", "Polearm", "Javelin"}:
             if not defender.sentinel_retaliation_used_round:
                 defender.sentinel_retaliation_used_round = True
+                defender.sentinel_needs_lift = True
                 attack_weapon = defender.weapon_main
                 wall_bonus = 1 if self._has_shield_wall(defender) else 0
                 self.log(f"{defender.character.name} uses Sentinel to retaliate with {attack_weapon.name}!")
@@ -1010,6 +1046,28 @@ class AvaCombatEngine:
         else:
             return {"used": True, "success": False}
 
+    def _reactive_maneuver(self, defender: CombatParticipant, attacker: CombatParticipant) -> None:
+        if defender.reactive_maneuver_used:
+            return
+        if self.tactical_map:
+            dist = self.tactical_map.manhattan_distance(defender.position[0], defender.position[1], attacker.position[0], attacker.position[1])
+            if dist > 1:
+                return
+        roll, dice = roll_2d10()
+        mod = defender.character.get_modifier("Strength", "Athletics")
+        total = roll + mod
+        self.log(f"Reactive maneuver roll {dice} -> {total}")
+        defender.reactive_maneuver_used = True
+        if total < 12:
+            self.log("Reactive maneuver fails.")
+            return
+        if not attacker.has_status(StatusEffect.PRONE):
+            attacker.apply_status(StatusEffect.PRONE)
+            attacker.status_durations[StatusEffect.PRONE] = 1
+            self.log(f"{defender.character.name} uses Reactive Stance to topple {attacker.character.name} prone.")
+        else:
+            self.apply_knockback(attacker, 1, source_pos=defender.position, source_name=defender.character.name)
+
     def action_trick_shot(self, attacker: CombatParticipant, defender: CombatParticipant, weapon: Weapon, effect: str) -> Dict[str, Any]:
         if not attacker.has_feat("Trick Shot"):
             return {"used": False}
@@ -1074,6 +1132,14 @@ class AvaCombatEngine:
                     break
                 if tile.occupant and isinstance(tile.occupant, CombatParticipant):
                     second = tile.occupant
+                    if second.current_hp <= 0:
+                        continue
+                    if self.tactical_map and not self.tactical_map.has_line_of_sight(attacker.position, (tx, ty)):
+                        continue
+                    af = getattr(attacker.character, "faction", None)
+                    sf = getattr(second.character, "faction", None)
+                    if af is not None and sf is not None and af == sf:
+                        continue
                     damage = weapon.damage
                     applied = second.take_damage(damage, armor_piercing=False)
                     self.log(f"Two Birds: {second.character.name} behind takes {applied} non-AP damage.")
@@ -1085,6 +1151,11 @@ class AvaCombatEngine:
         if not self.tactical_map:
             self.log(f"{attacker.character.name} drives {defender.character.name} back {blocks} blocks.")
             return False
+        start_tile = self.tactical_map.get_tile(attacker.position[0], attacker.position[1])
+        def_tile = self.tactical_map.get_tile(defender.position[0], defender.position[1])
+        if (start_tile and start_tile.move_cost > 1) or (def_tile and def_tile.move_cost > 1):
+            self.log("Control: uneven terrain prevents push movement.")
+            return True
         ax, ay = attacker.position
         dx = defender.position[0] - ax
         dy = defender.position[1] - ay
@@ -1497,6 +1568,8 @@ class AvaCombatEngine:
         if not throw_weapon:
             return {"used": False}
         res = self.perform_attack(attacker, defender, weapon=throw_weapon, accuracy_modifier=1)
+        if attacker.weapon_offhand is blade:
+            attacker.weapon_offhand = None
         return {"used": True, "result": res}
 
     def apply_knockback(

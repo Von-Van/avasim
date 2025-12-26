@@ -55,5 +55,9 @@ AVALORE_FEATS = {
     "Vicious Mockery": Feat(name="Vicious Mockery", description="Use an action to impose -1 penalty to target's attack/cast for 1 round; stacks to -3.", stat_requirements={"Harmony:Belief": 1}),
     "Harmonized Arsenal": Feat(name="Harmonized Arsenal", description="Throw small blade as throwing knife attack with +1 aim.", stat_requirements={"Dexterity:Finesse": 1}),
     "Lineage Weapon": Feat(name="Lineage Weapon", description="Attune to a weapon (and optional alt). Gains lineage bonuses and enables lineage abilities.", stat_requirements={"Harmony:Belief": 1}),
+    "LW: Elemental": Feat(name="LW: Elemental", description="Choose an element for your lineage weapon; attacks carry that element.", stat_requirements={"Lineage Weapon": 1}),
+    "LW: Flexible Design": Feat(name="LW: Flexible Design", description="Lineage weapon can swap between two templates/forms on your turn.", stat_requirements={"Lineage Weapon": 1}),
+    "LW: Mastery Of The Elements": Feat(name="LW: Mastery Of The Elements", description="Attune lineage weapon to any element at combat start; spend 1 action to swap in combat for stronger effects.", stat_requirements={"Lineage Weapon": 1, "LW: Elemental": 1}),
+    "LW: Questing Bane": Feat(name="LW: Questing Bane", description="Lineage aim bonus becomes +2 vs species previously slain with the lineage weapon.", stat_requirements={"Lineage Weapon": 1}),
     "LW: Lacuna": Feat(name="LW: Lacuna", description="Once per scene: within area, deal damage equal to lineage feat count or knock prone.", stat_requirements={"Harmony:Belief": 2}),
 }

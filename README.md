@@ -38,76 +38,72 @@ A comprehensive Python-based simulator for the Avalore tabletop RPG, implementin
   - Grazing hits for partial dodges
   - Armor soak mechanics
   - Comprehensive combat logging
+# AvaSim
+
+Combat sandbox and examples for Avalore-like rules, now modularized under the `combat/` package.
 
 ## Installation
 
-Requires Python 3.10+.
+- Python: 3.10+
+- Install dependencies: `pip install -r requirements.txt`
+  - Includes `PySide6` for the desktop UI and `streamlit` for the optional web UI.
 
-```bash
-git clone https://github.com/Von-Van/avasim.git
-cd avasim
-python3 -m pip install -r requirements.txt
+## Project Structure
+
+```
+avasim/
+  README.md
+  requirements.txt
+  __init__.py
+  combat/               # modular combat engine package
+    __init__.py
+    engine.py
+    participant.py
+    map.py
+    items.py
+    feats.py
+    spells.py
+    enums.py
+    dice.py
+  phase2/
+    combat.py
+  tests.py
+  streamlit_app.py      # optional web UI
+  pyside_app.py         # desktop UI (PySide6)
 ```
 
-## Quick Start
+## Quick Start (Library)
 
-### Character Creation
+Import from `combat`:
 
 ```python
-from avasim import Character
+from combat.engine import CombatEngine
+from combat.map import TacticalMap
+from combat.participant import Participant
 
-# Create a new character
-char = Character(name="Aria")
+map_ = TacticalMap(width=10, height=10)
+engine = CombatEngine(tactical_map=map_)
 
-# Apply a background
-char.apply_background("Soldier")
+a = Participant(name="A", position=(1,1))
+b = Participant(name="B", position=(2,1))
 
-# Add some XP first
-char.add_xp(20)
+engine.add_participant(a)
+engine.add_participant(b)
 
-# Spend XP to improve stats
-char.spend_xp_on_stat("Strength", 1)
-char.spend_xp_on_skill("Strength", "Athletics", 1)
-
-# Equip an item
-from avasim import ITEMS
-longbow = ITEMS["Longbow"]
-char.equip_item(longbow)
-
-# Save character
-char.save_to_file("aria.json")
-
-# Load character
-loaded_char = Character.load_from_file("aria.json")
+result = engine.attack(attacker=a, defender=b, weapon="sword")
+print(result.summary)
 ```
 
-### Combat Simulation (programmatic)
+## Running Tests
 
-```python
-from avasim import create_character
-from combat import (
-  CombatParticipant,
-  AvaCombatEngine,
-  AVALORE_WEAPONS,
-  AVALORE_ARMOR,
-  AVALORE_SHIELDS
-)
+- Run: `python3 -m unittest -q`
 
-# Create characters
-warrior_char = create_character("Aria", "Soldier", starting_xp=25)
-warrior_char.spend_xp_on_stat("Strength", 2)
-warrior_char.spend_xp_on_skill("Strength", "Athletics", 2)
+## Optional UIs
 
-mage_char = create_character("Zara", "Mage", starting_xp=25)
-mage_char.spend_xp_on_stat("Harmony", 2)
-mage_char.spend_xp_on_skill("Harmony", "Arcana", 3)
+- Desktop (PySide6): `python3 pyside_app.py`
+- Web (Streamlit): `streamlit run streamlit_app.py`
 
-# Setup combat participants
-warrior = CombatParticipant(
-    character=warrior_char,
-    current_hp=20,
-    max_hp=20,
-    weapon_main=AVALORE_WEAPONS["Arming Sword"],
+If you don’t use Streamlit, keep `PySide6` only; otherwise both are installed via `requirements.txt`.
     armor=AVALORE_ARMOR["Heavy Armor"],
     shield=AVALORE_SHIELDS["Large Shield"]
 )

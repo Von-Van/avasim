@@ -48,6 +48,7 @@ class CombatParticipant:
     sentinel_retaliation_used_round: bool = False
     reactive_maneuver_used: bool = False
     swap_used_turn: bool = False
+    sentinel_needs_lift: bool = False
     creature_type: str = "Unknown"
     lineage_weapon: Optional[str] = None
     lineage_weapon_alt: Optional[str] = None
@@ -192,6 +193,14 @@ class CombatParticipant:
         if self.actions_remaining < amount:
             return False
         self.actions_remaining -= amount
+        return True
+
+    def swap_weapons(self) -> bool:
+        """Once-per-turn convenience swap for main/offhand (dual-wield QoL)."""
+        if self.swap_used_turn:
+            return False
+        self.weapon_main, self.weapon_offhand = self.weapon_offhand, self.weapon_main
+        self.swap_used_turn = True
         return True
 
     def apply_status(self, status: StatusEffect):
