@@ -1,0 +1,612 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fmodern\fcharset0 Courier;\f2\fswiss\fcharset0 Helvetica-Oblique;
+\f3\fswiss\fcharset0 Helvetica-Bold;\f4\ftech\fcharset77 Symbol;\f5\fmodern\fcharset0 Courier-Oblique;
+}
+{\colortbl;\red255\green255\blue255;\red15\green55\blue78;\red0\green0\blue0;\red63\green108\blue175;
+}
+{\*\expandedcolortbl;;\cssrgb\c5882\c27843\c38039;\cssrgb\c0\c0\c0;\cssrgb\c30980\c50588\c74118;
+}
+{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid1\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid1}
+{\list\listtemplateid2\listhybrid{\listlevel\levelnfc0\levelnfcn0\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{decimal\}.}{\leveltext\leveltemplateid101\'02\'00.;}{\levelnumbers\'01;}\fi-360\li720\lin720 }{\listname ;}\listid2}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab720
+\pard\pardeftab720\sa160\partightenfactor0
+
+\f0\fs40 \cf2 Implementing Turn-Based Combat and Top-Down Grid Map in Python\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Grid Data Structure and Map Representation\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 A foundational step is to choose a suitable data structure to represent the grid-based map. The most common approach is to use a two-dimensional array (in Python, a list of lists) to model a tile map, where each element represents a cell on the grid{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=Using%2520,based%2520world"}}{\fldrslt \cf4 \ul \ulc4 [1]}}. This allows intuitive access by coordinates (e.g. 
+\f1\fs22 grid[y][x]
+\f0\fs24  for row 
+\f2\i y
+\f0\i0 , column 
+\f2\i x
+\f0\i0 ). Each cell can contain information about the terrain and contents of that tile, such as the terrain type, whether it is passable, and any objects or characters on it. In many cases, 
+\f3\b 0
+\f0\b0  can be used to denote impassable terrain and 
+\f3\b 1
+\f0\b0  for passable terrain as a simple representation{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=Blob%2520of%2520working%2520test%2520code,squares%2520we've%2520found%2520so%2520far"}}{\fldrslt \cf4 \ul \ulc4 [2]}}. However, for a more extensible design, you might create a 
+\f1\fs22 Tile
+\f0\fs24  class to hold tile metadata (described later) instead of raw integers.\
+For large or sparse maps, alternative representations exist. One could divide the world into chunks or use spatial hashing for potentially infinite or highly sparse worlds{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=,on%2520the%2520screen%2520at%2520once"}}{\fldrslt \cf4 \ul \ulc4 [3]}}. But for a typical tactical map of moderate size, a 2D array is simple and efficient. It\'92s also common to separate the static map from moving entities: for example, keep all terrain tiles in the 2D grid by their coordinates, but store characters or other mobile objects in a separate list or structure, with each entity tracking its own 
+\f1\fs22 (x, y)
+\f0\fs24  position{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=You%2520can%2520also%2520use%2520different,them%2520store%2520their%2520own%2520coordinates"}}{\fldrslt \cf4 \ul \ulc4 [4]}}. This way, the map primarily answers questions about terrain (e.g. \'93is this tile walkable?\'94) and the entity list handles turn order and individual stats.\
+Each grid cell (tile) should know whether it can be occupied or traversed. We define 
+\f3\b passable
+\f0\b0  vs 
+\f3\b impassable
+\f0\b0  terrain at the data level. For instance, a wall or a water tile might be marked impassable so that pathfinding will treat it as a barrier. The grid representation will be used by the movement and pathfinding logic to determine legal moves. In summary, a 
+\f2\i Map
+\f0\i0  class might contain a 
+\f1\fs22 width
+\f0\fs24  and 
+\f1\fs22 height
+\f0\fs24  and a 2D array of 
+\f1\fs22 Tile
+\f0\fs24  objects, providing methods to query or update tiles. By using a structured map representation, our game logic can easily query the state of any location and modify the terrain or contents as the game progresses.\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Turn-Based Logic and Initiative Handling\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 Turn-based combat requires managing the sequence in which units act. A common solution is to assign each combatant an 
+\f3\b initiative
+\f0\b0  value (often based on a speed stat or a random roll) and to sort units by this value at the start of an encounter{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2%23:~:text=believe%2520this%2520counts%2520as%2520OO,endgroup"}}{\fldrslt \cf4 \ul \ulc4 [5]}}. You can implement a 
+\f1\fs22 TurnManager
+\f0\fs24  (or part of a main Game loop) that maintains a list of units in turn order. For example, if units have a property 
+\f1\fs22 initiative
+\f0\fs24  or 
+\f1\fs22 speed
+\f0\fs24 , you can sort a list of all active units in descending order of that value at the beginning of combat. This sorted list represents the turn order for the first round. An alternative approach is a simple round-robin rotation if all units should act in a fixed sequence (e.g. player units all act, then enemy units, etc.), but using initiative makes the system more dynamic and interesting.\
+Once you have an ordered list of units, the game can progress in a cycle. A high-level loop might do the following: pick the next unit in the initiative order, let that unit take its turn (move and/or perform an action), then mark that unit as done and proceed to the next unit in the list. When the end of the list is reached, it wraps around to the start, possibly constituting a new round. At the end of each full round, you may also recompute the turn order if certain conditions changed (for example, if some effects can alter initiative or new units join the fight). In some systems, the initiative order is re-sorted each round to account for changes{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2%23:~:text=believe%2520this%2520counts%2520as%2520OO,endgroup"}}{\fldrslt \cf4 \ul \ulc4 [5]}}, though in many games a fixed order per battle (with perhaps occasional delays or skips) is sufficient.\
+To implement this cleanly, the 
+\f1\fs22 TurnManager
+\f0\fs24  could hold an index pointing to the current unit in the turn order list and a method like 
+\f1\fs22 next_turn()
+\f0\fs24  to advance the index. It would also handle edge cases such as skipping dead or inactive units, and checking win/loss conditions at the end of each turn. During an AI-controlled unit\'92s turn, the system would likely disable player inputs (if any) and perform the AI\'92s actions, then return control when the player\'92s unit is up. The turn-based loop can be seen as a simple state machine: e.g. a state for awaiting player input on their turn, a state for executing an action animation, a state for enemy turns, etc., but at its core the logic is that only one unit acts at a time while others wait.\
+
+\f3\b Initiative Example:
+\f0\b0  Suppose we have a player character with speed 12 and an enemy with speed 8. The turn manager would sort them so the player acts first. If using a round-robin approach, the sequence remains player then enemy each round. If using a dynamic initiative system (like some tactical RPGs or D&D), you might allow initiative to change or even allow some units to act more frequently if their speed is much higher. For instance, a more complex system could accumulate initiative points each turn to determine who acts next. However, for simplicity, a static sorted list or queue based on a starting initiative roll is usually sufficient for a basic design. The key is to have a clear structure in the code that tracks whose turn it is and moves to the next unit when appropriate.\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Movement Rules, Range Detection, and Pathfinding\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 {{\NeXTGraphic pastedGraphic.png \width8400 \height5060 \appleattachmentpadding0 \appleembedtype0 \appleaqc
+}¬}\pard\pardeftab720\sa180\partightenfactor0
+\cf3 \uc0\u8232 
+\f2\i A grid-based combat map with highlighted squares indicating all reachable positions for the selected unit. The blue highlighted tiles show the movement range available given the unit's speed. Calculating these reachable tiles involves traversing the grid from the unit\'92s position and finding all passable tiles within the allowed number of steps.
+\f0\i0 \
+Movement on a grid is typically constrained by rules such as how many tiles a unit can move per turn and which directions are allowed. In a simple implementation, units might be allowed to move in the four cardinal directions (up, down, left, right) but not diagonally{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=,left%2520and%2520up"}}{\fldrslt \cf4 \ul \ulc4 [6]}}. (If diagonal movement is desired, one can allow it as well, typically counting it as 1 step or ~1.4 steps of movement cost; however, many grid-based tactics games restrict movement to Manhattan distance for simplicity.) Each unit could have a 
+\f3\b movement allowance
+\f0\b0  (e.g. 5 tiles per turn), and movement can be executed one tile at a time until the allowance is expended. Movement rules should check that each step is onto a passable tile and possibly that it\'92s not occupied by impassable objects or units (you might allow moving through allies but not enemies, depending on design).\
+To determine and 
+\f3\b highlight the range of movement
+\f0\b0  for a unit (the "visual markers for movement"), the program needs to compute all tiles that the unit can reach with its movement allowance. This is essentially a graph search or flood-fill on the grid. A naive approach is to recursively explore outward tile by tile, but a robust method is to perform a 
+\f3\b breadth-first search (BFS)
+\f0\b0  (or equivalently Dijkstra\'92s algorithm if different terrains have different movement costs). Starting from the unit\'92s position, BFS will visit all neighboring passable tiles, then their neighbors, and so on, until it has moved the maximum number of steps. This yields the set of reachable tiles within the movement range. Unlike A
+\f2\i , which finds one shortest path to a specific target, BFS is well-suited for finding
+\f0\i0  all 
+\f2\i tiles within a given distance{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=A,x%2520distance%2520from%2520vert%2520a"}}{\fldrslt \cf4 \ul \ulc4 [7]}}. If movement costs vary by tile (say, moving through a forest costs 2 moves instead of 1), the search can account for that by accumulating cost and only exploring further if the total cost so far is within the unit\'92s movement points{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=Things%2520such%2520as%2520edges%2520effecting,within%2520range%2520of%2520your%2520character"}}{\fldrslt \cf4 \ul \ulc4 [8]}}. In other words, BFS/Dijkstra will naturally handle terrain movement modifiers by treating them as edge weights. As one source notes,
+\f0\i0  \'93A 
+\f2\i is for finding the shortest path from A to B. It\'92s not a good fit for finding all verts within X distance\'85 A DFS or BFS is suitable\'94{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=A,x%2520distance%2520from%2520vert%2520a"}}{\fldrslt 
+\f0\i0 \cf4 \ul \ulc4 [7]}}
+\f0\i0  for enumerating movement ranges. In practice, implementing this means using a queue (for BFS) and a structure to record the distance (in movement points used) to each tile visited, and stopping when the distance would exceed the unit\'92s allowance.\
+Using the result of this search, the game can highlight those tiles on the map UI (as shown in the image above). This gives the player visual feedback of where the unit can move. The backend logic would produce the set of reachable coordinates, which the rendering layer can draw in a special color or overlay.\
+For 
+\f3\b pathfinding
+\f0\b0  to a specific destination tile, for example when the player actually selects a tile to move to, the 
+\f3\b A
+\f0\b0  
+\f2\i (A-star) algorithm is ideal for computing the optimal path. A
+\f0\i0  finds the shortest path between two points on the grid using a heuristic to guide the search{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=A,x%2520distance%2520from%2520vert%2520a"}}{\fldrslt \cf4 \ul \ulc4 [7]}}. Typically, you would run A 
+\f2\i from the unit\'92s current position to the chosen destination tile, using a heuristic like Manhattan distance (for grid movement) to prioritize exploration. The algorithm will consider possible paths and find the one with minimum total movement cost, respecting impassable tiles as barriers. The output of A
+\f0\i0  is a sequence of grid coordinates (the path) that the unit should traverse. This path can then be used to animate the unit\'92s movement or to simply update its position. If the game needs to display the path (some games show a colored path line when you hover over a destination), the list of coordinates can be used for that as well.\
+To implement A
+\f2\i , you can either write your own or use existing libraries, but writing it is a good exercise. You would maintain an
+\f0\i0  
+\f2\i open list
+\f0\i0  
+\f2\i (priority queue) of nodes to explore (starting with the origin), and a
+\f0\i0  
+\f2\i closed list
+\f0\i0  
+\f2\i of nodes already evaluated. Each node (grid tile) has a
+\f0\i0  
+\f2\i G cost
+\f0\i0  
+\f2\i (distance from start), an
+\f0\i0  
+\f2\i H cost
+\f0\i0  
+\f2\i (heuristic estimate to goal), and an
+\f0\i0  
+\f2\i F cost = G + H{\field{\*\fldinst{HYPERLINK "https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2%23:~:text=F%2520=%2520G%2520+%2520H"}}{\fldrslt \cf4 \ul \ulc4 [9]}}{\field{\*\fldinst{HYPERLINK "https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2%23:~:text=F"}}{\fldrslt \cf4 \ul \ulc4 [10]}}. At each step you take the tile with lowest F from the open list, check its neighbors, update their costs, and continue until the destination is reached or open list is empty (meaning no path). The result is the shortest path on the grid considering movement costs. In code, A
+\f0\i0  often involves a loop that runs until the target is found, updating a dictionary or map of 
+\f1\fs22 \{tile: best_cost\}
+\f0\fs24  and using a priority queue for efficiency. For a grid-based map with a reasonable size, A* performance is usually very good.\
+
+\f3\b Range detection for attacks or abilities
+\f0\b0  is a related concept. If a unit has an attack range (say a bow can shoot up to 3 tiles away), you might also highlight tiles in range. The simplest notion of range is often a Manhattan distance: all tiles where 
+\f1\fs22 abs(dx) + abs(dy) <= range
+\f0\fs24  could be considered in range of a ranged attack. This forms a diamond-shaped area on a square grid. If obstacles can block attacks, you would need to check line-of-sight separately (e.g., do a raycast or BFS for projectile travel), but many games simplify by only considering distance and perhaps cover. Regardless, the calculation of attack range areas can reuse similar flood-fill logic or simple geometric rules. These tiles can be marked with a different color (e.g. red highlights for attack range). The backend should provide these sets of coordinates to the UI as needed.\
+In summary, 
+\f3\b movement and pathfinding
+\f0\b0  logic consists of two major parts: (1) computing reachable area (using BFS/Dijkstra) for display and validation of moves, and (2) computing specific paths (using A*) for guiding units from point A to B. Both rely on the underlying grid data (passability, movement cost) and must integrate with the turn-based rules (e.g. not letting a unit move beyond its allotted points).\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Map Tiles with Metadata: Passability, Terrain, Height\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 Designing the tile data structure to hold various metadata is key for flexibility. At minimum, each tile needs a flag for 
+\f3\b passability
+\f0\b0  \'96 whether a unit can move into that tile. This could be as simple as a boolean or an enum value. In our grid representation, an impassable tile (like a solid rock or wall) will be excluded from BFS/A* expansion. As mentioned earlier, one simple approach is marking impassable tiles with a 0 in the grid and normal ground with a 1{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=Blob%2520of%2520working%2520test%2520code,squares%2520we've%2520found%2520so%2520far"}}{\fldrslt \cf4 \ul \ulc4 [2]}}, but using a more descriptive object is preferable for a complex system.\
+A 
+\f1\fs22 Tile
+\f0\fs24  class could be defined with properties such as: 
+\f1\fs22 terrain_type
+\f0\fs24  (for example, "grass", "water", "mountain"), 
+\f1\fs22 passable
+\f0\fs24  (bool), 
+\f1\fs22 move_cost
+\f0\fs24  (an integer or float, default 1 for normal terrain, higher for difficult terrain), and 
+\f1\fs22 height
+\f0\fs24  (an integer representing elevation level). Additional metadata might include things like 
+\f1\fs22 occupant
+\f0\fs24  (to reference a unit currently on that tile, or None if empty), or environmental effects (for instance, a tile could have a damage effect like a trap, or a defensive cover bonus). Initially, you might only use some of these fields (e.g., passable and terrain type) and leave others (like height) at default values until you implement their effects.\
+By storing 
+\f3\b terrain type
+\f0\b0 , you enable logic that can change behavior based on terrain. For example, a "forest" terrain might be passable but could impose a higher movement cost (e.g., move_cost = 2), slowing units down. A "water" terrain might be not passable to units without a "swim" ability. These distinctions are easy to implement by checking tile properties during movement calculations. If a terrain has a higher move cost, the pathfinding algorithm should add that cost; effectively, a tile with move_cost 2 counts as two steps of movement. As one discussion suggests, this is handled by tracking cumulative distance in the search \'96 for instance, 
+\f2\i \'93if a tile is 50% speed, then it counts as twice the length (cost) of other tiles\'94{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=Things%2520such%2520as%2520edges%2520effecting,within%2520range%2520of%2520your%2520character"}}{\fldrslt 
+\f0\i0 \cf4 \ul \ulc4 [8]}}
+\f0\i0 . You would only continue expanding a path through that tile if the total cost remains within the character\'92s movement allowance.\
+The 
+\f3\b height
+\f0\b0  attribute of a tile is crucial for future expansion. Even if the initial version of your game treats all tiles as flat (height = 0), designing the data model with a height field means you can later introduce elevation differences. Height by itself doesn\'92t affect gameplay until you add rules for it, but it\'92s wise to include it from the start. For example, each tile\'92s height could default to 0, and you might have some tiles set to height 1, 2, etc., to represent hills or platforms. In the initial implementation these heights might not do anything, but later you can use them for advanced features (like granting attack bonuses for higher ground or restricting movement as described below).\
+
+\f3\b Passability vs. terrain:
+\f0\b0  Note that a tile can be passable or not largely independently of terrain type \'96 e.g., terrain type "mountain" might imply not passable unless the unit can fly or climb. You could encode that by 
+\f1\fs22 passable=False
+\f0\fs24  for mountains by default. Alternatively, you might allow movement 
+\f2\i onto
+\f0\i0  a mountain if certain conditions are met (like if unit has climbing gear or if the mountain is small relative to unit\'92s jump). In such cases, you might keep 
+\f1\fs22 passable=False
+\f0\fs24  but handle special abilities in movement logic, or you could incorporate a property like 
+\f1\fs22 required_ability="climb"
+\f0\fs24  on the tile. The system design should make it easy to check these conditions during pathfinding (for instance, the pathfinder can have a callback or a method 
+\f1\fs22 can_enter(tile, unit)
+\f0\fs24  that checks tile.passable and any unit-specific bypass abilities).\
+To summarize, each map tile should encapsulate: whether it can be moved through, what kind of terrain it is, how much it costs to move, and what its elevation is. This information feeds directly into the movement and combat rules. By having a rich tile representation, adding new mechanics (slippery ice tiles, damage floors, etc.) becomes a matter of extending the tile attributes and adjusting the rules accordingly, rather than refactoring the entire map structure.\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Python Class Structure Examples\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 Bringing it all together, the backend can be organized into classes that mirror the concepts above. Below is an example schema of Python classes for the core components:\
+\pard\pardeftab720\sa200\partightenfactor0
+
+\f1\fs22 \cf3 class Tile:
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def __init__(self, terrain_type:str, passable:bool=True, move_cost:int=1, height:int=0):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.terrain_type = terrain_type    # e.g., "grass", "water", "wall"
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.passable = passable            # False for impassable terrain
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.move_cost = move_cost          # movement cost (>=1)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.height = height                # elevation level (0 = flat ground)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # You can add other attributes like occupant, visual marker flags, etc.
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22 class MapGrid:
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def __init__(self, width:int, height:int):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.width = width
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.height = height
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Initialize a 2D list of Tile objects, defaulting to flat grassland for example
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.grid = [[Tile(terrain_type="grass", passable=True, move_cost=1, height=0)
+\f0\fs24 \uc0\u8232 
+\f1\fs22                       for x in range(width)] for y in range(height)]
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def get_tile(self, x:int, y:int) -> Tile:
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return self.grid[y][x]  # Assuming (0,0) is top-left and y is row index
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def in_bounds(self, x:int, y:int) -> bool:
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return 0 <= x < self.width and 0 <= y < self.height
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def is_passable(self, x:int, y:int) -> bool:
+\f0\fs24 \uc0\u8232 
+\f1\fs22         if not self.in_bounds(x, y):
+\f0\fs24 \uc0\u8232 
+\f1\fs22             return False
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return self.grid[y][x].passable
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22     def neighbors(self, x:int, y:int):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         """Generate coordinates of adjacent tiles (no diagonals here)."""
+\f0\fs24 \uc0\u8232 
+\f1\fs22         for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             nx, ny = x+dx, y+dy
+\f0\fs24 \uc0\u8232 
+\f1\fs22             if self.in_bounds(nx, ny):
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 yield nx, ny
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22     def find_reachable(self, start_x:int, start_y:int, max_cost:int):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         """Compute all reachable tiles from (start_x, start_y) with given movement cost budget."""
+\f0\fs24 \uc0\u8232 
+\f1\fs22         from collections import deque
+\f0\fs24 \uc0\u8232 
+\f1\fs22         frontier = deque()
+\f0\fs24 \uc0\u8232 
+\f1\fs22         frontier.append((start_x, start_y))
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # dist dictionary to track the cost so far to reach each tile
+\f0\fs24 \uc0\u8232 
+\f1\fs22         dist = \{(start_x, start_y): 0\}
+\f0\fs24 \uc0\u8232 
+\f1\fs22         reachable = set()
+\f0\fs24 \uc0\u8232 
+\f1\fs22         while frontier:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             cx, cy = frontier.popleft()
+\f0\fs24 \uc0\u8232 
+\f1\fs22             current_cost = dist[(cx, cy)]
+\f0\fs24 \uc0\u8232 
+\f1\fs22             reachable.add((cx, cy))
+\f0\fs24 \uc0\u8232 
+\f1\fs22             for nx, ny in self.neighbors(cx, cy):
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 if not self.grid[ny][nx].passable:
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     continue  # skip impassable
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 step_cost = self.grid[ny][nx].move_cost
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 new_cost = current_cost + step_cost
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 if new_cost <= max_cost and new_cost < dist.get((nx, ny), float('inf')):
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     dist[(nx, ny)] = new_cost
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     frontier.append((nx, ny))
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return reachable
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22     def find_path(self, start_x:int, start_y:int, goal_x:int, goal_y:int):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         """Compute a path (list of (x,y) coordinates) from start to goal using A*."""
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # This is a simplified outline; a full implementation would use a priority queue.
+\f0\fs24 \uc0\u8232 
+\f1\fs22         import heapq
+\f0\fs24 \uc0\u8232 
+\f1\fs22         frontier = []
+\f0\fs24 \uc0\u8232 
+\f1\fs22         heapq.heappush(frontier, (0, start_x, start_y))
+\f0\fs24 \uc0\u8232 
+\f1\fs22         came_from = \{(start_x, start_y): None\}
+\f0\fs24 \uc0\u8232 
+\f1\fs22         cost_so_far = \{(start_x, start_y): 0\}
+\f0\fs24 \uc0\u8232 
+\f1\fs22         while frontier:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             _, cx, cy = heapq.heappop(frontier)
+\f0\fs24 \uc0\u8232 
+\f1\fs22             if (cx, cy) == (goal_x, goal_y):
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 break  # path found
+\f0\fs24 \uc0\u8232 
+\f1\fs22             for nx, ny in self.neighbors(cx, cy):
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 if not self.grid[ny][nx].passable:
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     continue
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 new_cost = cost_so_far[(cx, cy)] + self.grid[ny][nx].move_cost
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 if (nx, ny) not in cost_so_far or new_cost < cost_so_far[(nx, ny)]:
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     cost_so_far[(nx, ny)] = new_cost
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     # Heuristic: Manhattan distance to goal
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     priority = new_cost + abs(goal_x - nx) + abs(goal_y - ny)
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     heapq.heappush(frontier, (priority, nx, ny))
+\f0\fs24 \uc0\u8232 
+\f1\fs22                     came_from[(nx, ny)] = (cx, cy)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Reconstruct path from goal to start
+\f0\fs24 \uc0\u8232 
+\f1\fs22         if (goal_x, goal_y) not in came_from:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             return None  # no path found
+\f0\fs24 \uc0\u8232 
+\f1\fs22         path = []
+\f0\fs24 \uc0\u8232 
+\f1\fs22         node = (goal_x, goal_y)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         while node:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             path.append(node)
+\f0\fs24 \uc0\u8232 
+\f1\fs22             node = came_from[node]
+\f0\fs24 \uc0\u8232 
+\f1\fs22         path.reverse()
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return path
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22 class Unit:
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def __init__(self, name:str, x:int, y:int, speed:int, move_points:int):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.name = name
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.x = x            # current position on the grid
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.y = y
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.speed = speed    # used to calculate turn order (higher = faster)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.move_points = move_points  # how far this unit can move in one turn
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.initiative = 0   # initiative roll or value for turn order (could be derived from speed)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.active = True    # whether unit is alive/active
+\f0\fs24 \uc0\u8232 \u8232 
+\f1\fs22 class TurnManager:
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def __init__(self, units:list):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Determine initial turn order by unit speed or initiative value
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.units = sorted(units, key=lambda u: u.initiative, reverse=True)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.turn_index = 0  # index of current unit in the turn order
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def next_unit(self):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Advance to the next active unit in the list
+\f0\fs24 \uc0\u8232 
+\f1\fs22         if not self.units:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             return None
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.turn_index = (self.turn_index + 1) % len(self.units)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Skip units that are not active (e.g., dead) 
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # This loop prevents infinite loop in case all are inactive
+\f0\fs24 \uc0\u8232 
+\f1\fs22         for i in range(len(self.units)):
+\f0\fs24 \uc0\u8232 
+\f1\fs22             idx = (self.turn_index + i) % len(self.units)
+\f0\fs24 \uc0\u8232 
+\f1\fs22             if self.units[idx].active:
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 self.turn_index = idx
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 break
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return self.units[self.turn_index]
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def current_unit(self):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         if not self.units:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             return None
+\f0\fs24 \uc0\u8232 
+\f1\fs22         return self.units[self.turn_index]
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def add_unit(self, unit:Unit):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         # Insert a new unit and resort turn order (for example, if a unit joins mid-combat)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.units.append(unit)
+\f0\fs24 \uc0\u8232 
+\f1\fs22         self.units.sort(key=lambda u: u.initiative, reverse=True)
+\f0\fs24 \uc0\u8232 
+\f1\fs22     def remove_unit(self, unit:Unit):
+\f0\fs24 \uc0\u8232 
+\f1\fs22         if unit in self.units:
+\f0\fs24 \uc0\u8232 
+\f1\fs22             idx = self.units.index(unit)
+\f0\fs24 \uc0\u8232 
+\f1\fs22             self.units.remove(unit)
+\f0\fs24 \uc0\u8232 
+\f1\fs22             # Adjust turn_index if needed
+\f0\fs24 \uc0\u8232 
+\f1\fs22             if idx <= self.turn_index and self.turn_index > 0:
+\f0\fs24 \uc0\u8232 
+\f1\fs22                 self.turn_index -= 1
+\f0\fs24 \
+\pard\pardeftab720\sa180\partightenfactor0
+\cf3 The above classes outline a possible architecture:\
+\pard\tx360\tx690\pardeftab720\li690\fi-690\sa36\partightenfactor0
+\ls1\ilvl0
+\f4 \cf3 {\listtext	\uc0\u8226 	}
+\f1\fs22 Tile
+\f0\fs24  holds terrain info.\
+\ls1\ilvl0
+\f4 {\listtext	\uc0\u8226 	}
+\f1\fs22 MapGrid
+\f0\fs24  contains a grid of tiles and provides methods for neighbor lookup, range finding (
+\f1\fs22 find_reachable
+\f0\fs24 ) using BFS, and pathfinding (
+\f1\fs22 find_path
+\f0\fs24 ) using A
+\f2\i . The 
+\f5\fs22 find_path
+\f2\fs24  method as given is a simplified A
+\f0\i0  for clarity \'96 a real implementation would handle the open list more robustly, but it illustrates calculating cost and using a heuristic.\
+\ls1\ilvl0
+\f4 {\listtext	\uc0\u8226 	}
+\f1\fs22 Unit
+\f0\fs24  represents a character or entity on the map with properties like 
+\f1\fs22 speed
+\f0\fs24  and 
+\f1\fs22 move_points
+\f0\fs24  (the maximum tiles it can move per turn). We also include 
+\f1\fs22 initiative
+\f0\fs24  which could be set at the start of combat (e.g., roll dice or just use speed).\
+\pard\tx360\tx690\pardeftab720\li690\fi-690\sa180\partightenfactor0
+\ls1\ilvl0
+\f4 \cf3 {\listtext	\uc0\u8226 	}
+\f1\fs22 TurnManager
+\f0\fs24  maintains turn order and handles cycling through turns. In this simple design, 
+\f1\fs22 initiative
+\f0\fs24  is used to sort the units initially. We provided methods to advance to the next unit, skip inactive ones, and modify the roster if needed.\
+\pard\pardeftab720\sa180\partightenfactor0
+\cf3 In practice, you might integrate 
+\f1\fs22 TurnManager
+\f0\fs24  and 
+\f1\fs22 MapGrid
+\f0\fs24  into a higher-level 
+\f1\fs22 Game
+\f0\fs24  or 
+\f1\fs22 Combat
+\f0\fs24  class that orchestrates everything. For example, a 
+\f1\fs22 Combat
+\f0\fs24  class could contain a 
+\f1\fs22 MapGrid
+\f0\fs24  and a 
+\f1\fs22 TurnManager
+\f0\fs24  and have methods like 
+\f1\fs22 execute_turn()
+\f0\fs24  which uses 
+\f1\fs22 TurnManager.current_unit()
+\f0\fs24  to get whose turn it is, then allows that unit to move/act (through whatever input or AI), then ends the turn and moves on.\
+The class schema can be adjusted to your needs. For instance, some designs prefer to give each 
+\f1\fs22 Unit
+\f0\fs24  a reference to the 
+\f1\fs22 MapGrid
+\f0\fs24  or vice versa so that units can query the map easily. Others might structure it in an entity-component-system style rather than OOP classes. But the above provides a clear, object-oriented breakdown.\
+A few things to note: - Collision or occupancy is not explicitly handled in this schema. We might want a way to mark a tile as occupied by a unit (besides the tile\'92s inherent passability). This could be done by having an 
+\f1\fs22 occupant
+\f0\fs24  attribute in 
+\f1\fs22 Tile
+\f0\fs24  or by simply checking if any unit has the coordinates when considering moves. A more sophisticated approach might treat units as separate from terrain, and pathfinding would treat any tile with an enemy unit as temporarily impassable (unless you allow moving through them). - The 
+\f1\fs22 TurnManager
+\f0\fs24  as written presumes everyone gets exactly one action per round in sorted order. If you wanted to support initiative ties or multiple actions, you could extend it (e.g., units might have an "action points" system or speed might allow acting more often). The sorted list and cycling index approach works for most basic turn systems. - The 
+\f1\fs22 find_reachable
+\f0\fs24  function uses a BFS-like approach (with a deque) to mark reachable tiles within 
+\f1\fs22 max_cost
+\f0\fs24 . This is how you'd generate the movement highlight area. The 
+\f1\fs22 find_path
+\f0\fs24  function uses a priority queue for A* to get an actual path. Both rely on 
+\f1\fs22 MapGrid.neighbors
+\f0\fs24  to explore adjacent tiles and check bounds and passability.\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs32 \cf2 Expanding the System: Elevation and Future Features\
+\pard\pardeftab720\sa180\partightenfactor0
+
+\fs24 \cf3 With the core system in place, you can plan for expansions like varied elevation and other advanced mechanics. 
+\f3\b Elevation (height)
+\f0\b0  can significantly enrich gameplay. Since each tile has a height attribute, you should decide how height differences affect movement and combat. A common approach from tactical RPGs is to introduce a stat or rule for climbing: for example, units could have a 
+\f3\b jump capability
+\f0\b0  that limits how high they can step up. In the Disgaea series, every panel has a height and units have a Jump stat determining how much height difference they can traverse{\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height%23:~:text=Units%2520have%2520a%2520ImageJump%2520stat,,can%2520reach%2520up%2520and%2520down"}}{\fldrslt \cf4 \ul \ulc4 [11]}}. If the height difference to an adjacent tile is greater than the unit\'92s jump stat, that tile is effectively impassable for that unit (they\'92d have to find a ramp or another route). If it\'92s within the limit, the move is allowed (possibly at extra cost or not, depending on design). Flying units, on the other hand, might ignore height differences entirely and move in a straight line over tiles{\field{\*\fldinst{HYPERLINK "https://www.reddit.com/r/gamedesign/comments/ojrx2t/a_turn_based_tactics_game_that_uses_a_three/%23:~:text=Try%2520looking%2520into%2520Disgaea%2520series"}}{\fldrslt \cf4 \ul \ulc4 [12]}} \'96 you can implement this by having a flag on the unit (e.g., 
+\f1\fs22 unit.can_fly = True
+\f0\fs24 ) and modifying pathfinding to bypass height checks or passability for such units (except perhaps respecting map boundaries).\
+Elevation can also affect 
+\f3\b range and combat
+\f0\b0 . You might decide that height gives an advantage or disadvantage in attacks. For instance, a ranged attacker on higher ground might shoot farther or deal more damage to targets below. In Disgaea, there are bonuses or penalties based on height differences (e.g. accuracy or damage changes){\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height%23:~:text=Every%2520panel%2520of%2520the%2520map,the%2520reach%2520of%2520various%2520actions"}}{\fldrslt \cf4 \ul \ulc4 [13]}}. You could incorporate something similar: when calculating if a target is in range, include vertical distance or require that the vertical difference is within a certain threshold for certain attacks. Another effect is 
+\f3\b line of sight
+\f0\b0 : a high obstacle (like a tall wall tile) could block shots even if the shooter\'92s range is technically sufficient. Implementing this might involve casting a ray or doing a stepwise line check between attacker and target, taking into account tile heights in between.\
+Another expansion is to add different 
+\f3\b unit abilities or terrain interactions
+\f0\b0 . Some ideas: - 
+\f3\b Terrain-specific effects
+\f0\b0 : e.g., forest tiles might give defense bonuses or concealment to units standing on them; swamp tiles might cost extra movement or inflict a status effect if a unit ends its turn there. - 
+\f3\b Destructible or dynamic terrain
+\f0\b0 : allow certain walls or obstacles to be destroyed by attacks, or doors that can open/close (changing passability during combat). - 
+\f3\b Different grid shapes
+\f0\b0 : The example we used is a square grid. Some games use hexagonal grids for smoother movement in 6 directions. The overall system (turns, pathfinding, etc.) would remain similar, but neighbor calculations and distance heuristics change (hex grids have 6 neighbors and use a different distance metric). - 
+\f3\b Multiple floors or 3D grid
+\f0\b0 : Instead of just having a height value, you could effectively have a 3D grid (x, y, z). This is like having multiple layers of map stacked. Units might climb ladders or stairs to change their z-level. You would then handle movement in 3 dimensions (with gravity or ladder adjacency rules). If implementing multi-level buildings, you might allow units to be "inside" a structure on an upper floor which might require special handling for visibility and movement. - 
+\f3\b Initiative variants
+\f0\b0 : Currently, we sorted once per round. You could implement a 
+\f3\b time-turn
+\f0\b0  system where each unit\'92s turn comes up according to a timeline (for instance, an active time battle or conditional turn-based system used in some JRPGs). This would involve recalculating turn order more continuously rather than a simple cycle. - 
+\f3\b AI and pathfinding
+\f0\b0 : As you add features, enemy AI will need to take them into account. For example, an AI might use pathfinding to navigate around impassable terrain and within move range to approach the player. It might also evaluate high ground as better positions. This adds complexity but uses the same underlying data (the map and tile metadata).\
+When adding new features, aim to extend the existing classes in a logical way. The current architecture cleanly separates concerns (map, unit, turn management), so new rules will often involve updating one part without heavily affecting others. For example, to add height-based movement restrictions, you could modify 
+\f1\fs22 MapGrid.neighbors
+\f0\fs24  or the pathfinding functions to check height differences between the current tile and neighbor tile, and require that the unit\'92s jump ability is >= that difference before considering that neighbor. You might give the 
+\f1\fs22 Unit
+\f0\fs24  class a new attribute like 
+\f1\fs22 jump_height
+\f0\fs24 . Similarly, to add terrain-based movement costs, you already have 
+\f1\fs22 move_cost
+\f0\fs24  in Tile which pathfinding is using \'96 you might just need to adjust those values for different terrain types.\
+Finally, as you incorporate elevation and other features, it\'92s important to update the 
+\f3\b visual feedback
+\f0\b0  for players. If elevation matters, the UI should somehow indicate height (e.g., numbers on tiles or shading). If certain tiles are impassable or slow, highlighting them differently or showing an icon can help players plan. Although our focus is on backend, keep in mind how the data will be presented.\
+In conclusion, by structuring the game with a clear grid representation and separate components for turn order, movement, and combat rules, you create a flexible foundation. Implement the basics (movement, attack range, turn cycling) in a straightforward way first. Then gradually layer on enhancements like height effects, complex terrain, and special abilities. The clean separation of data (MapGrid, Tile) and logic (pathfinding, TurnManager, etc.) will make it much easier to maintain and expand the system with new mechanics as your game evolves. With this architecture, an agentic coding AI or any developer can confidently simulate a rich turn-based combat scenario on a grid, knowing that each concern is handled in a modular fashion. Good luck with your implementation, and enjoy the process of seeing your tactical combat system come to life!\
+
+\f3\b Sources:
+\f0\b0 \
+\pard\tx360\tx720\pardeftab720\li720\fi-720\sa200\partightenfactor0
+\ls2\ilvl0\cf3 {\listtext	1.	}Philipp on GameDev StackExchange \'96 
+\f2\i "Using a two-dimensional array is pretty much the default solution for representing a 2d tile-based world."{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=Using%2520,based%2520world"}}{\fldrslt 
+\f0\i0 \cf4 \ul \ulc4 [1]}}
+\f0\i0 \
+{\listtext	2.	}Philipp on GameDev StackExchange \'96 Suggestion to separate static map and moving objects for efficiency{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=You%2520can%2520also%2520use%2520different,them%2520store%2520their%2520own%2520coordinates"}}{\fldrslt \cf4 \ul \ulc4 [4]}}.\
+{\listtext	3.	}AtomicInf on Stack Overflow \'96 Movement algorithm assumptions (no diagonal movement, step limit per turn, passable tile check){\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=,left%2520and%2520up"}}{\fldrslt \cf4 \ul \ulc4 [6]}}.\
+{\listtext	4.	}AtomicInf on Stack Overflow \'96 Example grid representation with 0 as impassable and 1 as passable{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=Blob%2520of%2520working%2520test%2520code,squares%2520we've%2520found%2520so%2520far"}}{\fldrslt \cf4 \ul \ulc4 [2]}}.\
+{\listtext	5.	}ClassicThunder on GameDev StackExchange \'96 Advice that A* is for point-to-point shortest path, while BFS/DFS is better for finding all reachable tiles within a range{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=A,x%2520distance%2520from%2520vert%2520a"}}{\fldrslt \cf4 \ul \ulc4 [7]}}.\
+{\listtext	6.	}ClassicThunder on GameDev StackExchange \'96 Handling terrain movement cost in search by treating slower terrain as longer distance{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=Things%2520such%2520as%2520edges%2520effecting,within%2520range%2520of%2520your%2520character"}}{\fldrslt \cf4 \ul \ulc4 [8]}}.\
+{\listtext	7.	}User 
+\f2\i lancen
+\f0\i0  on GameDev StackExchange \'96 Describing a turn order system where units are sorted by initiative each round (dynamic turn order){\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2%23:~:text=believe%2520this%2520counts%2520as%2520OO,endgroup"}}{\fldrslt \cf4 \ul \ulc4 [5]}}.\
+{\listtext	8.	}Reddit r/gamedesign discussion \'96 Example of Disgaea using height and a jump stat for movement; flying units ignore height and obstacles{\field{\*\fldinst{HYPERLINK "https://www.reddit.com/r/gamedesign/comments/ojrx2t/a_turn_based_tactics_game_that_uses_a_three/%23:~:text=Try%2520looking%2520into%2520Disgaea%2520series"}}{\fldrslt \cf4 \ul \ulc4 [12]}}.\
+{\listtext	9.	}
+\f2\i Disgaea Wiki
+\f0\i0  \'96 Explanation of terrain height and Jump stat limiting movement to higher panels, plus effects of height on actions{\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height%23:~:text=Units%2520have%2520a%2520ImageJump%2520stat,,can%2520reach%2520up%2520and%2520down"}}{\fldrslt \cf4 \ul \ulc4 [11]}}.\
+\pard\pardeftab720\sa200\partightenfactor0
+\cf3 {{\NeXTGraphic 1__#$!@%!#__pastedGraphic.png \width9400 \height80 \appleattachmentpadding0 \appleembedtype0 \appleaqc
+}¬}\pard\pardeftab720\sa200\partightenfactor0
+\cf3 \
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=Using%2520,based%2520world"}}{\fldrslt \cf4 \ul \ulc4 [1]}} {\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=,on%2520the%2520screen%2520at%2520once"}}{\fldrslt \cf4 \ul \ulc4 [3]}} {\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg%23:~:text=You%2520can%2520also%2520use%2520different,them%2520store%2520their%2520own%2520coordinates"}}{\fldrslt \cf4 \ul \ulc4 [4]}} tilemap - Data structure for logical representatios of maps for a 2D top-down RPG - Game Development Stack Exchange\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg"}}{\fldrslt \cf4 \ul \ulc4 https://gamedev.stackexchange.com/questions/141374/data-structure-for-logical-representatios-of-maps-for-a-2d-top-down-rpg}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=Blob%2520of%2520working%2520test%2520code,squares%2520we've%2520found%2520so%2520far"}}{\fldrslt \cf4 \ul \ulc4 [2]}} {\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm%23:~:text=,left%2520and%2520up"}}{\fldrslt \cf4 \ul \ulc4 [6]}} python - Turn Based Movement Algorithm - Stack Overflow\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm"}}{\fldrslt \cf4 \ul \ulc4 https://stackoverflow.com/questions/19578354/turn-based-movement-algorithm}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2%23:~:text=believe%2520this%2520counts%2520as%2520OO,endgroup"}}{\fldrslt \cf4 \ul \ulc4 [5]}} architecture - Help with software design of a turn based combat system using SDL2 - Game Development Stack Exchange\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2"}}{\fldrslt \cf4 \ul \ulc4 https://gamedev.stackexchange.com/questions/197988/help-with-software-design-of-a-turn-based-combat-system-using-sdl2}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=A,x%2520distance%2520from%2520vert%2520a"}}{\fldrslt \cf4 \ul \ulc4 [7]}} {\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles%23:~:text=Things%2520such%2520as%2520edges%2520effecting,within%2520range%2520of%2520your%2520character"}}{\fldrslt \cf4 \ul \ulc4 [8]}} 3d - Displaying possible movement tiles - Game Development Stack Exchange\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles"}}{\fldrslt \cf4 \ul \ulc4 https://gamedev.stackexchange.com/questions/54671/displaying-possible-movement-tiles}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2%23:~:text=F%2520=%2520G%2520+%2520H"}}{\fldrslt \cf4 \ul \ulc4 [9]}} {\field{\*\fldinst{HYPERLINK "https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2%23:~:text=F"}}{\fldrslt \cf4 \ul \ulc4 [10]}} Easy A* (star) Pathfinding. Today we\'92ll being going over the A*\'85 | by Nicholas Swift | Medium\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2"}}{\fldrslt \cf4 \ul \ulc4 https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height%23:~:text=Units%2520have%2520a%2520ImageJump%2520stat,,can%2520reach%2520up%2520and%2520down"}}{\fldrslt \cf4 \ul \ulc4 [11]}} {\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height%23:~:text=Every%2520panel%2520of%2520the%2520map,the%2520reach%2520of%2520various%2520actions"}}{\fldrslt \cf4 \ul \ulc4 [13]}} Terrain Height | Disgaea Wiki | Fandom\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://disgaea.fandom.com/wiki/Terrain_Height"}}{\fldrslt \cf4 \ul \ulc4 https://disgaea.fandom.com/wiki/Terrain_Height}}\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://www.reddit.com/r/gamedesign/comments/ojrx2t/a_turn_based_tactics_game_that_uses_a_three/%23:~:text=Try%2520looking%2520into%2520Disgaea%2520series"}}{\fldrslt \cf4 \ul \ulc4 [12]}} A turn based tactics game that uses a three dimensional grid. : r/gamedesign\
+\pard\pardeftab720\sa180\partightenfactor0
+{\field{\*\fldinst{HYPERLINK "https://www.reddit.com/r/gamedesign/comments/ojrx2t/a_turn_based_tactics_game_that_uses_a_three/"}}{\fldrslt \cf4 \ul \ulc4 https://www.reddit.com/r/gamedesign/comments/ojrx2t/a_turn_based_tactics_game_that_uses_a_three/}}}

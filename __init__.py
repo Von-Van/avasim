@@ -1,7 +1,8 @@
 """
 Avalore Character Simulator
 
-A Python-based character simulator for the Avalore tabletop RPG system.
+A comprehensive Python-based simulator for the Avalore tabletop RPG system,
+including character creation, management, and full combat mechanics.
 """
 
 from .avasim import (
@@ -19,8 +20,35 @@ from .avasim import (
     SKILL_MAX
 )
 
-__version__ = "1.0.0"
+try:
+    from .combat import (
+        Weapon,
+        Armor,
+        Shield,
+        Feat,
+        Spell,
+        CombatParticipant,
+        AvaCombatEngine,
+        AVALORE_WEAPONS,
+        AVALORE_ARMOR,
+        AVALORE_SHIELDS,
+        AVALORE_FEATS,
+        AVALORE_SPELLS,
+        RangeCategory,
+        ArmorCategory,
+        ShieldType,
+        roll_2d10,
+        roll_1d2,
+        roll_1d3,
+        roll_1d6,
+    )
+    _combat_available = True
+except Exception:
+    _combat_available = False
+
+__version__ = "2.0.0"
 __all__ = [
+    # Character system
     "Character",
     "Item",
     "STATS",
@@ -32,5 +60,33 @@ __all__ = [
     "STAT_MIN",
     "STAT_MAX",
     "SKILL_MIN",
-    "SKILL_MAX"
+    "SKILL_MAX",
 ]
+
+# Add combat exports if available
+if _combat_available:
+    __all__ += [
+        # Combat classes
+        "Weapon",
+        "Armor",
+        "Shield",
+        "Feat",
+        "Spell",
+        "CombatParticipant",
+        "AvaCombatEngine",
+        # Combat databases
+        "AVALORE_WEAPONS",
+        "AVALORE_ARMOR",
+        "AVALORE_SHIELDS",
+        "AVALORE_FEATS",
+        "AVALORE_SPELLS",
+        # Enums
+        "RangeCategory",
+        "ArmorCategory",
+        "ShieldType",
+        # Dice utilities
+        "roll_2d10",
+        "roll_1d2",
+        "roll_1d3",
+        "roll_1d6",
+    ]

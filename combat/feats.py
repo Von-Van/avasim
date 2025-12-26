@@ -1,0 +1,59 @@
+from dataclasses import dataclass, field
+from typing import Dict
+
+@dataclass
+class Feat:
+    name: str
+    description: str
+    stat_requirements: Dict[str, int] = field(default_factory=dict)
+
+AVALORE_FEATS = {
+    "Dual Striker": Feat(name="Dual Striker", description="Attack with two light weapons as one limited action. Each attack at -1 aim.", stat_requirements={"Dexterity:Finesse": 1, "Strength:Athletics": 1}),
+    "Volley": Feat(name="Volley", description="Fire two arrows with a bow. Each at -1 aim. Once per turn.", stat_requirements={"Dexterity:Finesse": 2}),
+    "Quickfooted": Feat(name="Quickfooted", description="Gain +3 bonus to evasion rolls vs certain weapons. Free 2-block movement after full evade.", stat_requirements={"Dexterity:Acrobatics": 2}),
+    "Shieldmaster": Feat(name="Shieldmaster", description="Shield blocks get +3 vs certain weapons and +1 vs all ranged.", stat_requirements={"Strength:Fortitude": 1}),
+    "Shield Bash": Feat(name="Shield Bash", description="After successful block, make free shield bash attack that cannot be evaded or blocked.", stat_requirements={"Strength:Athletics": 1}),
+    "Armor Piercer": Feat(name="Armor Piercer", description="Make AP attacks with arming swords or small weapons as limited action.", stat_requirements={"Strength:Athletics": 0}),
+    "Riposte": Feat(name="Riposte", description="Counter-attack when enemy misses or you successfully evade.", stat_requirements={"Dexterity:Finesse": 2}),
+    "Parry": Feat(name="Parry", description="Reaction once/turn: impose -2 to an incoming attack.", stat_requirements={"Dexterity:Finesse": 1}),
+    "Dueling Stance": Feat(name="Dueling Stance", description="While wielding a single one-handed weapon and no shield/offhand: +1 aim and +1 damage.", stat_requirements={"Dexterity:Finesse": 1}),
+    "Second Wind": Feat(name="Second Wind", description="Once per fight, use action to gain temp HP = STR:Fortitude + 2.", stat_requirements={"Strength:Fortitude": 1}),
+    "Precise Senses": Feat(name="Precise Senses", description="No penalties for fighting in darkness or against hidden targets.", stat_requirements={"Intelligence:Perception": 2}),
+    "Combat Acrobat": Feat(name="Combat Acrobat", description="Vault action acts as both dash and evade.", stat_requirements={"Dexterity:Acrobatics": 2}),
+    "Control": Feat(name="Control", description="After landing attack with polearm/greatsword/large shield, push target 4 blocks. +1 damage if against wall.", stat_requirements={"Strength:Athletics": 3}),
+    "Hamstring": Feat(name="Hamstring", description="Limited action with whip/recurve/crossbow. Attack at -1, cripples target (-2 movement, -2 evasion for 1 round).", stat_requirements={"Intelligence:Perception": 2}),
+    "Hilt Strike": Feat(name="Hilt Strike", description="Before Lift or after Strike with 2H weapon, hilt strike for half damage (non-AP). Ignores Quickfooted, bypasses grazing.", stat_requirements={"Strength:Athletics": 1, "Dexterity:Acrobatics": 1}),
+    "Sentinel": Feat(name="Sentinel", description="Wield polearm with shield. After successful block, retaliate with polearm instead of shield bash.", stat_requirements={"Strength:Athletics": 1}),
+    "Shield Wall": Feat(name="Shield Wall", description="When adjacent to other large shield users, +1 to Sentinel/Shield Bash attacks and block rolls vs ranged.", stat_requirements={"Strength:Athletics": 3, "Strength:Fortitude": 2}),
+    "Bastion Stance": Feat(name="Bastion Stance", description="Limited action when blocking. Immune to knockback/push/prone. Shield bashes +1 and knock prone.", stat_requirements={"Strength:Fortitude": 3}),
+    "Steadfast Defender": Feat(name="Steadfast Defender", description="When ending turn without moving (polearm/greatsword/meteor hammer), immune to forced movement. Free attack at -2 vs enemies entering/exiting range.", stat_requirements={"Strength:Athletics": 2, "Dexterity:Acrobatics": 0}),
+    "Patient Flow": Feat(name="Patient Flow", description="Limited action: Evade and enter Flowing Stance. On successful evade vs melee/skirmish, redirect attack to adjacent enemy with -2 roll.", stat_requirements={"Dexterity:Acrobatics": 2}),
+    "Quickdraw": Feat(name="Quickdraw", description="With longbow/crossbow/sling: Dash+Loose or Evade+Loose as one action. Attacks at -2, -1 damage.", stat_requirements={"Dexterity:Acrobatics": 1}),
+    "Ranger's Gambit": Feat(name="Ranger's Gambit", description="Limited action: Point-blank bow shot at melee range. -2 aim, AP, bypasses grazing, pushes 3 blocks. Vulnerable to melee until next turn.", stat_requirements={"Dexterity:Finesse": 1, "Strength:Athletics": 0}),
+    "Forward Charge": Feat(name="Forward Charge", description="After landing attack with greatsword/polearm/staff, next Topple/Shove cannot be evaded/blocked. Move 3 blocks forward on success.", stat_requirements={"Strength:Athletics": 1}),
+    "Mighty Strike": Feat(name="Mighty Strike", description="Attack actions with sling/staff/crossbow/mace/large shield/unarmed/hilt strikes knock targets back 3 blocks.", stat_requirements={"Strength:Athletics": 2}),
+    "Trick Shot": Feat(name="Trick Shot", description="3x per scene: Use 2 actions for ranged attack with special effect (Bodkin AP, Whistling no-graze, Dazzling -3 spells, Incendiary 3 AoE).", stat_requirements={"Intelligence:Research": 1}),
+    "Always Ready": Feat(name="Always Ready", description="+3 initiative. When surprised, lose bonus but negate surprise penalties.", stat_requirements={"Dexterity:Acrobatics": 0}),
+    "First Strike": Feat(name="First Strike", description="Requires Always Ready. +5 initiative (replaces +3). 3 actions on first turn instead of 2.", stat_requirements={"Dexterity:Acrobatics": 1}),
+    "Whirling Devil": Feat(name="Whirling Devil", description="Limited action: Attack every enemy you pass while moving. Each at -1 aim. 2-action weapons deal half damage.", stat_requirements={"Dexterity:Acrobatics": 3}),
+    "Galestorm Stance": Feat(name="Galestorm Stance", description="After evading attacks with greatsword/polearm/staff, next turn make Galestorm: extra attack per evasion. Subsequent hits on same target halved.", stat_requirements={"Dexterity:Acrobatics": 3}),
+    "Fanning Blade": Feat(name="Fanning Blade", description="Limited action with throwing knife/meteor hammer/sling/wand: Attack all targets in 5x5 area at -1 each.", stat_requirements={"Dexterity:Acrobatics": 3}),
+    "Strategic Archer": Feat(name="Strategic Archer", description="If 3+ blocks above target, ranged hits deal +1 damage.", stat_requirements={}),
+    "Reactive Stance": Feat(name="Reactive Stance", description="While unarmed, after a full Evade, take a free Maneuver (e.g., Shove) against attacker.", stat_requirements={"Dexterity:Finesse": 2}),
+    "Momentum": Feat(name="Momentum", description="After Dash, make limited unarmed attack with +2 damage; suffer 1 AP self-damage.", stat_requirements={"Strength:Athletics": 2, "Dexterity:Acrobatics": 1}),
+    "Rakish Combination": Feat(name="Rakish Combination", description="After landing Unarmed, next Unarmed gains +1 aim or deals flat 4 damage (non-stacking).", stat_requirements={"Dexterity:Finesse": 1, "Strength:Athletics": 1}),
+    "Piercing Strike": Feat(name="Piercing Strike", description="Limited: with arming sword or small weapon, make AP strike; if target has AP immunity, do +1 damage. You become vulnerable (+1 to attacks against you) until next turn.", stat_requirements={"Strength": 0}),
+    "Feint": Feat(name="Feint", description="Limited: unarmed attack or maneuver that ignores Shieldmaster and Quickfooted bonuses.", stat_requirements={"Dexterity:Finesse": 2}),
+    "Backline Flanker": Feat(name="Backline Flanker", description="While Hidden, attacking a target adjacent to an ally: +1 damage on hit; on miss, next Conceal ignores -3 penalty.", stat_requirements={"Dexterity:Stealth": 2}),
+    "Skirmishing Party": Feat(name="Skirmishing Party", description="Allies within skirmish range gain +1 to Stealth checks; if party attacks first, +2 initiative (hook only).", stat_requirements={"Dexterity:Stealth": 1}),
+    "Rousing Inspiration": Feat(name="Rousing Inspiration", description="Limited: grant allies within skirmish range temp HP equal to HAR+2; each ally only once per scene.", stat_requirements={"Harmony": 1}),
+    "Commanding Inspiration": Feat(name="Commanding Inspiration", description="Limited: grant allies +1 to aim until start of next turn (stacks to +2 with another source).", stat_requirements={"Harmony:Belief": 3}),
+    "Evasive Tactics": Feat(name="Evasive Tactics", description="While critical, first graze each round does not trigger Death Save; Riposte/Parry do not trigger Death Save.", stat_requirements={"Dexterity:Acrobatics": 1}),
+    "Death's Dance": Feat(name="Death's Dance", description="While critical, once per turn take any action without Death Save. Cannot be taken with Evasive Tactics/Second Wind.", stat_requirements={"Strength:Fortitude": 1}),
+    "Two Birds One Stone": Feat(name="Two Birds One Stone", description="Limited action with crossbow/spellbook: Bolt pierces one enemy and hits another behind (within 5 blocks). Second target takes non-AP damage.", stat_requirements={"Intelligence:Perception": 0}),
+    "Aberration Slayer": Feat(name="Aberration Slayer", description="Choose Fae/Beast/Undead. They avoid you. +1 damage vs chosen type.", stat_requirements={"Harmony:Belief": 0}),
+    "Vicious Mockery": Feat(name="Vicious Mockery", description="Use an action to impose -1 penalty to target's attack/cast for 1 round; stacks to -3.", stat_requirements={"Harmony:Belief": 1}),
+    "Harmonized Arsenal": Feat(name="Harmonized Arsenal", description="Throw small blade as throwing knife attack with +1 aim.", stat_requirements={"Dexterity:Finesse": 1}),
+    "Lineage Weapon": Feat(name="Lineage Weapon", description="Attune to a weapon (and optional alt). Gains lineage bonuses and enables lineage abilities.", stat_requirements={"Harmony:Belief": 1}),
+    "LW: Lacuna": Feat(name="LW: Lacuna", description="Once per scene: within area, deal damage equal to lineage feat count or knock prone.", stat_requirements={"Harmony:Belief": 2}),
+}
