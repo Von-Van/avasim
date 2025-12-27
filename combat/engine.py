@@ -72,7 +72,7 @@ class AvaCombatEngine:
                         line_chars.append("=")
                     else:
                         line_chars.append(".")
-            rows.append("".join(line_chars))
+            rows.append(" ".join(line_chars))
         legend_parts = []
         for p in self.participants:
             if not hasattr(p, "position"):

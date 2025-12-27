@@ -2,16 +2,18 @@ import copy
 import sys
 from collections import deque
 from typing import Dict
+import json
 
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QFileDialog,
+    QMessageBox,
     QTabWidget,
     QPushButton,
     QSpinBox,
@@ -19,6 +21,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 
 from avasim import Character, STATS
 from combat import (
@@ -48,7 +52,7 @@ class CombatantEditor(QGroupBox):
 
         # Stats
         self.stat_spins: Dict[str, QSpinBox] = {}
-        stats_box = QGroupBox("Stats (-3..3)")
+        stats_box = QGroupBox("Stats (-3 - +3)")
         stats_layout = QGridLayout()
         for idx, stat in enumerate(STATS.keys()):
             spin = self._spin_box(-3, 3, 0)
@@ -59,7 +63,7 @@ class CombatantEditor(QGroupBox):
 
         # Skills
         self.skill_spins: Dict[str, Dict[str, QSpinBox]] = {}
-        skills_box = QGroupBox("Skills (-3..3)")
+        skills_box = QGroupBox("Skills (-3 - +3)")
         skills_layout = QGridLayout()
         row = 0
         for stat, skills in STATS.items():
@@ -73,34 +77,34 @@ class CombatantEditor(QGroupBox):
             row += 1
         skills_box.setLayout(skills_layout)
 
-        # Equipment choices
-        self.weapon_choice = QComboBox()
-        self.weapon_choice.addItems(list(AVALORE_WEAPONS.keys()))
-        self.weapon_choice.setCurrentText("Arming Sword")
+        # Equipment choices (hands can take a weapon or a shield)
+        hand_items = ["(None)"] + list(AVALORE_WEAPONS.keys()) + list(AVALORE_SHIELDS.keys())
+        self._two_handed_names = {name for name, w in AVALORE_WEAPONS.items() if getattr(w, "is_two_handed", False)}
+        self._weapon_names = set(AVALORE_WEAPONS.keys())
+        self._large_shield_name = "Large Shield"
+        self.hand1_choice = QComboBox(); self.hand1_choice.addItems(hand_items)
+        self.hand1_choice.setCurrentText("Arming Sword")
+        self.hand2_choice = QComboBox(); self.hand2_choice.addItems(hand_items)
+        self.hand2_choice.setCurrentText("(None)")
+        self.hand1_choice.currentTextChanged.connect(lambda _: self._refresh_hand_options())
+        self.hand2_choice.currentTextChanged.connect(lambda _: self._refresh_hand_options())
 
         self.armor_choice = QComboBox()
         self.armor_choice.addItem("None")
         self.armor_choice.addItems(list(AVALORE_ARMOR.keys()))
         self.armor_choice.setCurrentText("Light Armor")
 
-        self.shield_choice = QComboBox()
-        self.shield_choice.addItem("(None)")
-        self.shield_choice.addItems(list(AVALORE_SHIELDS.keys()))
-
-        self.evade_check = QCheckBox("Evading this attack")
-        self.block_check = QCheckBox("Blocking with shield")
-
         equip_box = QGroupBox("Equipment")
         equip_layout = QGridLayout()
-        equip_layout.addWidget(QLabel("Weapon"), 0, 0)
-        equip_layout.addWidget(self.weapon_choice, 0, 1)
+        equip_layout.addWidget(QLabel("Hand 1"), 0, 0)
+        equip_layout.addWidget(self.hand1_choice, 0, 1)
         equip_layout.addWidget(QLabel("Armor"), 1, 0)
         equip_layout.addWidget(self.armor_choice, 1, 1)
-        equip_layout.addWidget(QLabel("Shield"), 2, 0)
-        equip_layout.addWidget(self.shield_choice, 2, 1)
-        equip_layout.addWidget(self.evade_check, 3, 0, 1, 2)
-        equip_layout.addWidget(self.block_check, 4, 0, 1, 2)
+        equip_layout.addWidget(QLabel("Hand 2"), 2, 0)
+        equip_layout.addWidget(self.hand2_choice, 2, 1)
         equip_box.setLayout(equip_layout)
+
+        self._refresh_hand_options()
 
         # HP/Anima
         core_box = QGroupBox("Vitals")
@@ -142,11 +146,38 @@ class CombatantEditor(QGroupBox):
         current_hp = max(0, min(int(self.hp_input.value()), max_hp))
         char.current_hp = current_hp
 
-        weapon = copy.deepcopy(AVALORE_WEAPONS[self.weapon_choice.currentText()])
         armor_name = self.armor_choice.currentText()
         armor = None if armor_name == "None" else copy.deepcopy(AVALORE_ARMOR[armor_name])
-        shield_name = self.shield_choice.currentText()
-        shield = None if shield_name == "(None)" else copy.deepcopy(AVALORE_SHIELDS[shield_name])
+
+        hand1_sel = self.hand1_choice.currentText()
+        hand2_sel = self.hand2_choice.currentText()
+
+        weapon_main = None
+        weapon_offhand = None
+        shield = None
+
+        def assign_hand(selection: str):
+            nonlocal weapon_main, weapon_offhand, shield
+            if weapon_main and getattr(weapon_main, "is_two_handed", False):
+                return
+            if not selection or selection == "(None)":
+                return
+            if selection in AVALORE_WEAPONS:
+                weapon_obj = copy.deepcopy(AVALORE_WEAPONS[selection])
+                if weapon_obj.is_two_handed:
+                    weapon_main = weapon_obj
+                    weapon_offhand = None
+                    shield = None
+                    return
+                if weapon_main is None:
+                    weapon_main = weapon_obj
+                elif weapon_offhand is None:
+                    weapon_offhand = weapon_obj
+            elif selection in AVALORE_SHIELDS and shield is None:
+                shield = copy.deepcopy(AVALORE_SHIELDS[selection])
+
+        assign_hand(hand1_sel)
+        assign_hand(hand2_sel)
 
         participant = CombatParticipant(
             character=char,
@@ -154,13 +185,90 @@ class CombatantEditor(QGroupBox):
             max_hp=char.get_max_hp(),
             anima=int(self.anima_input.value()),
             max_anima=int(self.max_anima_input.value()),
-            weapon_main=weapon,
+            weapon_main=weapon_main,
+            weapon_offhand=weapon_offhand,
             armor=armor,
             shield=shield,
-            is_evading=self.evade_check.isChecked(),
-            is_blocking=self.block_check.isChecked(),
         )
         return participant
+
+    def to_template(self) -> dict:
+        return {
+            "name": self.name_input.text(),
+            "hp": int(self.hp_input.value()),
+            "anima": int(self.anima_input.value()),
+            "max_anima": int(self.max_anima_input.value()),
+            "stats": {k: int(v.value()) for k, v in self.stat_spins.items()},
+            "skills": {stat: {sk: int(sp.value()) for sk, sp in skills.items()} for stat, skills in self.skill_spins.items()},
+            "hand1": self.hand1_choice.currentText(),
+            "hand2": self.hand2_choice.currentText(),
+            "armor": self.armor_choice.currentText(),
+        }
+
+    def load_template(self, data: dict) -> None:
+        if not data:
+            return
+        self.name_input.setText(str(data.get("name", "")))
+        self.hp_input.setValue(int(data.get("hp", self.hp_input.value())))
+        self.anima_input.setValue(int(data.get("anima", self.anima_input.value())))
+        self.max_anima_input.setValue(int(data.get("max_anima", self.max_anima_input.value())))
+        for stat, val in data.get("stats", {}).items():
+            if stat in self.stat_spins:
+                self.stat_spins[stat].setValue(int(val))
+        for stat, skills in data.get("skills", {}).items():
+            if stat in self.skill_spins:
+                for sk, val in skills.items():
+                    if sk in self.skill_spins[stat]:
+                        self.skill_spins[stat][sk].setValue(int(val))
+        hand1_val = data.get("hand1") or data.get("weapon")
+        hand2_val = data.get("hand2") or data.get("shield")
+        if hand1_val and hand1_val in self.hand_choice_model():
+            self.hand1_choice.setCurrentText(hand1_val)
+        if hand2_val and hand2_val in self.hand_choice_model():
+            self.hand2_choice.setCurrentText(hand2_val)
+        if data.get("armor") in self.armor_choice_model():
+            self.armor_choice.setCurrentText(data.get("armor"))
+        self._refresh_hand_options()
+
+    def armor_choice_model(self) -> set[str]:
+        return set([self.armor_choice.itemText(i) for i in range(self.armor_choice.count())])
+
+    def hand_choice_model(self) -> set[str]:
+        return set([self.hand1_choice.itemText(i) for i in range(self.hand1_choice.count())])
+
+    def _apply_hand_disable(self, combo: QComboBox, disable: set[str]) -> None:
+        model = combo.model()
+        if not model:
+            return
+        current = combo.currentText()
+        for i in range(model.rowCount()):
+            item = model.item(i)
+            if not item:
+                continue
+            text = item.text()
+            should_disable = text in disable and text != current
+            item.setEnabled(not should_disable)
+        if current in disable:
+            none_idx = combo.findText("(None)")
+            if none_idx >= 0:
+                combo.setCurrentIndex(none_idx)
+
+    def _refresh_hand_options(self) -> None:
+        hand1 = self.hand1_choice.currentText()
+        hand2 = self.hand2_choice.currentText()
+
+        disable_hand1: set[str] = set()
+        disable_hand2: set[str] = set()
+
+        if hand2 in self._two_handed_names:
+            disable_hand1 |= self._weapon_names
+            disable_hand1.add(self._large_shield_name)
+        if hand1 in self._two_handed_names:
+            disable_hand2 |= self._weapon_names
+            disable_hand2.add(self._large_shield_name)
+
+        self._apply_hand_disable(self.hand1_choice, disable_hand1)
+        self._apply_hand_disable(self.hand2_choice, disable_hand2)
 
 
 class MainWindow(QWidget):
@@ -169,12 +277,45 @@ class MainWindow(QWidget):
         self.setWindowTitle("AvaSim — Qt Combat Sandbox")
         self.resize(1000, 700)
 
+        self._is_dark = True
+        self._time_of_day = "day"
+
         root_layout = QVBoxLayout()
         self.setLayout(root_layout)
 
         # Tabs: Character Editor and Simulation
         self.tabs = QTabWidget()
         root_layout.addWidget(self.tabs)
+
+        # Home Tab
+        self.home_tab = QWidget()
+        home_layout = QVBoxLayout()
+        self.home_tab.setLayout(home_layout)
+
+        title = QLabel("AvaSim — Combat Sandbox")
+        title.setStyleSheet("font-size: 22px; font-weight: 700;")
+        subtitle = QLabel("Avalore tactical playground")
+        subtitle.setStyleSheet("font-size: 14px; margin-bottom: 12px;")
+        credits = QLabel("Credits: Rules by Avalore. UI by AvaSim.")
+        credits.setStyleSheet("font-size: 12px; color: #888;")
+
+        placeholder = QLabel("[ Artwork / Graphic placeholder ]")
+        placeholder.setMinimumHeight(160)
+        placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setStyleSheet("border: 1px dashed #888;")
+
+        self.start_button = QPushButton("Start")
+        self.start_button.setFixedWidth(140)
+        self.start_button.clicked.connect(lambda: self.tabs.setCurrentWidget(self.character_tab))
+
+        home_layout.addWidget(title)
+        home_layout.addWidget(subtitle)
+        home_layout.addWidget(placeholder)
+        home_layout.addWidget(self.start_button, alignment=Qt.AlignLeft)
+        home_layout.addWidget(credits)
+        home_layout.addStretch()
+
+        self.tabs.addTab(self.home_tab, "Home")
 
         # Character Editor Tab
         self.character_tab = QWidget()
@@ -188,6 +329,19 @@ class MainWindow(QWidget):
         editors_layout.addWidget(self.defender_editor)
         char_layout.addLayout(editors_layout)
 
+        template_row = QHBoxLayout()
+        self.save_c1_btn = QPushButton("Save Character 1")
+        self.save_c1_btn.clicked.connect(lambda: self._save_template(self.attacker_editor))
+        self.load_c1_btn = QPushButton("Load Character 1")
+        self.load_c1_btn.clicked.connect(lambda: self._load_template(self.attacker_editor))
+        self.save_c2_btn = QPushButton("Save Character 2")
+        self.save_c2_btn.clicked.connect(lambda: self._save_template(self.defender_editor))
+        self.load_c2_btn = QPushButton("Load Character 2")
+        self.load_c2_btn.clicked.connect(lambda: self._load_template(self.defender_editor))
+        for btn in (self.save_c1_btn, self.load_c1_btn, self.save_c2_btn, self.load_c2_btn):
+            template_row.addWidget(btn)
+        template_row.addStretch()
+        char_layout.addLayout(template_row)
         self.tabs.addTab(self.character_tab, "Character")
 
         # Simulation Tab
@@ -195,9 +349,27 @@ class MainWindow(QWidget):
         sim_layout = QVBoxLayout()
         self.simulation_tab.setLayout(sim_layout)
 
+        controls_row = QHBoxLayout()
         self.simulate_button = QPushButton("Run full combat")
         self.simulate_button.clicked.connect(self.run_simulation)
-        sim_layout.addWidget(self.simulate_button)
+        controls_row.addWidget(self.simulate_button)
+
+        controls_row.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Dark", "Light"])
+        self.theme_combo.setMinimumWidth(110)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        controls_row.addWidget(self.theme_combo)
+
+        controls_row.addWidget(QLabel("Time of Day:"))
+        self.time_combo = QComboBox()
+        self.time_combo.addItems(["Day", "Night"])
+        self.time_combo.setMinimumWidth(110)
+        self.time_combo.currentIndexChanged.connect(self._on_time_changed)
+        controls_row.addWidget(self.time_combo)
+
+        controls_row.addStretch()
+        sim_layout.addLayout(controls_row)
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Mode:"))
@@ -221,6 +393,9 @@ class MainWindow(QWidget):
         sim_layout.addLayout(player_action_row)
         self._set_player_controls_enabled(False)
 
+        # initialize control state based on default mode
+        self._on_mode_changed()
+
         # Simple movement controls
         move_row = QHBoxLayout()
         move_row.addWidget(QLabel("Move to x:"))
@@ -243,12 +418,25 @@ class MainWindow(QWidget):
         self.action_view = QTextEdit()
         self.action_view.setReadOnly(True)
         self.action_view.setPlaceholderText("Turn-by-turn actions will appear here.")
+        self.action_view.setLineWrapMode(QTextEdit.NoWrap)
+        self.action_view.setMinimumHeight(240)
         left_col.addWidget(QLabel("Action Log"))
         left_col.addWidget(self.action_view)
+
+        self.status_view = QTextEdit()
+        self.status_view.setReadOnly(True)
+        self.status_view.setPlaceholderText("Status badges will appear here.")
+        self.status_view.setLineWrapMode(QTextEdit.NoWrap)
+        self.status_view.setMaximumHeight(140)
+        self.status_view.setMinimumHeight(90)
+        left_col.addWidget(QLabel("Statuses"))
+        left_col.addWidget(self.status_view)
 
         self.map_view = QTextEdit()
         self.map_view.setReadOnly(True)
         self.map_view.setPlaceholderText("Post-turn maps will appear here.")
+        self.map_view.setLineWrapMode(QTextEdit.NoWrap)
+        self.map_view.setMinimumHeight(320)
         right_col.addWidget(QLabel("Map Log"))
         right_col.addWidget(self.map_view)
 
@@ -257,6 +445,8 @@ class MainWindow(QWidget):
         sim_layout.addLayout(log_row)
 
         self.tabs.addTab(self.simulation_tab, "Simulation")
+
+        self._apply_theme()
 
     def run_simulation(self):
         attacker = self.attacker_editor.to_participant()
@@ -268,6 +458,7 @@ class MainWindow(QWidget):
         tactical_map.set_occupant(*defender.position, defender)
 
         engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+        engine.set_time_of_day(self._time_of_day)
 
         # Override logger to keep output in-app (no stdout noise)
         def ui_log(message: str):
@@ -292,7 +483,7 @@ class MainWindow(QWidget):
                 break
             target = targets[0]
 
-            if self.mode_combo.currentText() == "Player controls Attacker" and current is attacker:
+            if self.mode_combo.currentText() == "Player controls Character 1" and current is attacker:
                 self._execute_player_turn(engine, current, target)
             else:
                 self._take_auto_actions(engine, current, target)
@@ -307,6 +498,7 @@ class MainWindow(QWidget):
         action_lines = ["Combat finished", f"Turns executed: {turns}", "", "Combat Log:"] + engine.combat_log
         self.action_view.setPlainText("\n".join(action_lines))
         self.map_view.setPlainText("\n".join(engine.map_log))
+        self.status_view.setPlainText(self._format_status_badges([attacker, defender]))
 
     def move_attacker(self):
         attacker = self.attacker_editor.to_participant()
@@ -325,6 +517,7 @@ class MainWindow(QWidget):
         engine.combat_log.append(engine.get_combat_summary())
         self.action_view.setPlainText("\n".join(engine.combat_log))
         self.map_view.setPlainText("\n".join(engine.map_log))
+        self.status_view.setPlainText(self._format_status_badges([attacker, defender]))
 
     def cast_spell(self):
         # Spell casting disabled in this UI for now.
@@ -333,6 +526,13 @@ class MainWindow(QWidget):
     def _on_mode_changed(self):
         player_mode = self.mode_combo.currentText() == "Player controls Character 1"
         self._set_player_controls_enabled(player_mode)
+
+    def _on_theme_changed(self):
+        self._is_dark = self.theme_combo.currentText().lower() == "dark"
+        self._apply_theme()
+
+    def _on_time_changed(self):
+        self._time_of_day = self.time_combo.currentText().lower()
 
     def _set_player_controls_enabled(self, enabled: bool):
         self.player_action1_combo.setEnabled(enabled)
@@ -345,6 +545,81 @@ class MainWindow(QWidget):
             if val != "Skip":
                 actions.append(val)
         return actions
+
+    def _apply_theme(self):
+        if self._is_dark:
+            bg = "#1e1b18"
+            panel = "#26221f"
+            text = "#f0ede6"
+            accent = "#d6a756"
+        else:
+            bg = "#f4efe7"
+            panel = "#ffffff"
+            text = "#1f1a17"
+            accent = "#c1842f"
+        style = f"""
+            QWidget {{ background: {bg}; color: {text}; font-family: 'Merriweather', 'Times New Roman', serif; }}
+            QGroupBox {{ border: 1px solid {accent}; margin-top: 6px; padding: 6px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; left: 6px; padding: 0 4px; color: {accent}; font-weight: 600; }}
+            QPushButton {{ background: {panel}; border: 1px solid {accent}; padding: 6px 10px; border-radius: 4px; color: {text}; }}
+            QPushButton:hover {{ background: {accent}; color: {bg}; }}
+            QLineEdit, QComboBox, QSpinBox, QTextEdit {{ background: {panel}; color: {text}; border: 1px solid {accent}; }}
+            QLabel {{ color: {text}; }}
+        """
+        self.setStyleSheet(style)
+        mono_font = QFont("Courier New")
+        mono_font.setStyleHint(QFont.Monospace)
+        mono_font.setFixedPitch(True)
+
+        map_font = QFont(mono_font)
+        map_font.setPointSize(12)
+        self.map_view.setFont(map_font)
+
+        log_font = QFont(mono_font)
+        log_font.setPointSize(11)
+        self.action_view.setFont(log_font)
+        self.status_view.setFont(log_font)
+
+    def _save_template(self, editor: CombatantEditor) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Character Template", "character.json", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            data = editor.to_template()
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", f"Could not save template:\n{exc}")
+
+    def _load_template(self, editor: CombatantEditor) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Character Template", "", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            editor.load_template(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Load failed", f"Could not load template:\n{exc}")
+
+    def _format_status_badges(self, participants: list[CombatParticipant]) -> str:
+        lines: list[str] = []
+        for p in participants:
+            if not p:
+                continue
+            name = p.character.name or "?"
+            arch = ", ".join(sorted(getattr(p.character, "archetypes", []))) if hasattr(p, "character") else ""
+            hp = f"HP {p.current_hp}/{p.max_hp}"
+            stances = []
+            if p.is_blocking:
+                stances.append("Blocking")
+            if p.is_evading:
+                stances.append("Evading")
+            for status in getattr(p, "status_effects", set()):
+                stances.append(status.name.title())
+            badge = ", ".join(stances) if stances else "None"
+            lines.append(f"{name} [{arch}] — {hp} — Status: {badge}")
+        return "\n".join(lines)
 
     def _execute_player_turn(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         actions = self._selected_player_actions()
