@@ -1,0 +1,81 @@
+{
+  "theme": "Dark",
+  "time": "Day",
+  "mode": "Player controls both (Default)",
+  "surprise": "None",
+  "char1": {
+    "name": "eta",
+    "hp": 20,
+    "anima": 0,
+    "max_anima": 0,
+    "stats": {
+      "Dexterity": 0,
+      "Intelligence": 0,
+      "Harmony": 0,
+      "Strength": 0
+    },
+    "skills": {
+      "Dexterity": {
+        "Acrobatics": 0,
+        "Stealth": 0,
+        "Finesse": 0
+      },
+      "Intelligence": {
+        "Healing": 0,
+        "Perception": 0,
+        "Research": 0
+      },
+      "Harmony": {
+        "Arcana": 0,
+        "Nature": 0,
+        "Belief": -3
+      },
+      "Strength": {
+        "Athletics": 0,
+        "Fortitude": 0,
+        "Forging": 0
+      }
+    },
+    "hand1": "Arming Sword",
+    "hand2": "(None)",
+    "armor": "Light Armor"
+  },
+  "char2": {
+    "name": "mckenzie",
+    "hp": 20,
+    "anima": 0,
+    "max_anima": 0,
+    "stats": {
+      "Dexterity": 0,
+      "Intelligence": 0,
+      "Harmony": 0,
+      "Strength": 0
+    },
+    "skills": {
+      "Dexterity": {
+        "Acrobatics": 0,
+        "Stealth": 0,
+        "Finesse": 0
+      },
+      "Intelligence": {
+        "Healing": 0,
+        "Perception": 0,
+        "Research": 0
+      },
+      "Harmony": {
+        "Arcana": 0,
+        "Nature": 0,
+        "Belief": 0
+      },
+      "Strength": {
+        "Athletics": 0,
+        "Fortitude": 0,
+        "Forging": 0
+      }
+    },
+    "hand1": "Arming Sword",
+    "hand2": "(None)",
+    "armor": "Light Armor"
+  },
+  "show_math": false
+}

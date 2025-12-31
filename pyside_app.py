@@ -1,8 +1,11 @@
 import copy
 import sys
+import os
 from collections import deque
 from typing import Dict
 import json
+import html
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,9 +23,17 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QMenuBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QCheckBox,
+    QGraphicsScene,
+    QGraphicsView,
+    QSlider,
+    QScrollArea,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont, QAction, QColor, QBrush, QPen
 
 from avasim import Character, STATS
 from combat import (
@@ -230,6 +241,19 @@ class CombatantEditor(QGroupBox):
             self.armor_choice.setCurrentText(data.get("armor"))
         self._refresh_hand_options()
 
+    def _blank_template(self) -> dict:
+        return {
+            "name": "",
+            "hp": 20,
+            "anima": 0,
+            "max_anima": 2,
+            "stats": {stat: 0 for stat in STATS.keys()},
+            "skills": {stat: {sk: 0 for sk in skills} for stat, skills in STATS.items()},
+            "hand1": "Arming Sword",
+            "hand2": "(None)",
+            "armor": "Light Armor",
+        }
+
     def armor_choice_model(self) -> set[str]:
         return set([self.armor_choice.itemText(i) for i in range(self.armor_choice.count())])
 
@@ -276,50 +300,91 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("AvaSim — Qt Combat Sandbox")
         self.resize(1000, 700)
+        self.setMinimumSize(1000, 700)
 
         self._is_dark = True
         self._time_of_day = "day"
+        appdata = Path(os.environ.get("APPDATA", ""))
+        self.settings_path = (appdata / "AvaSim" / "settings.json") if appdata.exists() else (Path.home() / ".avasim_settings.json")
+        self.quickstart_setup = {
+            "char1": {
+                "name": "Captain",
+                "hp": 28,
+                "anima": 2,
+                "max_anima": 4,
+                "stats": {"Strength": 2, "Dexterity": 1, "Intelligence": 0, "Vitality": 2},
+                "skills": {
+                    "Strength": {"Athletics": 2, "Fortitude": 1, "Power": 1},
+                    "Dexterity": {"Acrobatics": 1, "Finesse": 1, "Stealth": 0},
+                    "Intelligence": {"Lore": 0, "Investigation": 0, "Insight": 0},
+                    "Vitality": {"Endurance": 2, "Discipline": 1, "Intimidation": 0},
+                },
+                "hand1": "Arming Sword",
+                "hand2": "Small Shield",
+                "armor": "Medium Armor",
+            },
+            "char2": {
+                "name": "Brigand",
+                "hp": 24,
+                "anima": 0,
+                "max_anima": 2,
+                "stats": {"Strength": 1, "Dexterity": 2, "Intelligence": 0, "Vitality": 1},
+                "skills": {
+                    "Strength": {"Athletics": 1, "Fortitude": 0, "Power": 0},
+                    "Dexterity": {"Acrobatics": 2, "Finesse": 2, "Stealth": 1},
+                    "Intelligence": {"Lore": 0, "Investigation": 0, "Insight": 0},
+                    "Vitality": {"Endurance": 1, "Discipline": 0, "Intimidation": 0},
+                },
+                "hand1": "Spear",
+                "hand2": "(None)",
+                "armor": "Light Armor",
+            },
+            "mode": "Player controls both (Default)",
+            "theme": "Light",
+            "time": "Day",
+            "show_math": False,
+        }
 
         root_layout = QVBoxLayout()
         self.setLayout(root_layout)
 
+        # Menu bar (Windows-friendly shortcuts)
+        self.menu_bar = QMenuBar()
+        root_layout.addWidget(self.menu_bar)
+        self._build_menus()
+
         # Tabs: Character Editor and Simulation
         self.tabs = QTabWidget()
-        root_layout.addWidget(self.tabs)
 
-        # Home Tab
-        self.home_tab = QWidget()
-        home_layout = QVBoxLayout()
-        self.home_tab.setLayout(home_layout)
-
-        title = QLabel("AvaSim — Combat Sandbox")
-        title.setStyleSheet("font-size: 22px; font-weight: 700;")
-        subtitle = QLabel("Avalore tactical playground")
-        subtitle.setStyleSheet("font-size: 14px; margin-bottom: 12px;")
-        credits = QLabel("Credits: Rules by Avalore. UI by AvaSim.")
-        credits.setStyleSheet("font-size: 12px; color: #888;")
-
-        placeholder = QLabel("[ Artwork / Graphic placeholder ]")
-        placeholder.setMinimumHeight(160)
-        placeholder.setAlignment(Qt.AlignCenter)
-        placeholder.setStyleSheet("border: 1px dashed #888;")
-
+        # Start button (centered) to jump to Character tab
+        start_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.setFixedWidth(140)
-        self.start_button.clicked.connect(lambda: self.tabs.setCurrentWidget(self.character_tab))
+        self.start_button.setToolTip("Go to Character setup")
+        self.start_button.clicked.connect(lambda: self.tabs.setCurrentWidget(self.character_tab_scroll))
 
-        home_layout.addWidget(title)
-        home_layout.addWidget(subtitle)
-        home_layout.addWidget(placeholder)
-        home_layout.addWidget(self.start_button, alignment=Qt.AlignLeft)
-        home_layout.addWidget(credits)
-        home_layout.addStretch()
+        self.quickstart_button = QPushButton("Quick Start Duel")
+        self.quickstart_button.setFixedWidth(160)
+        self.quickstart_button.setToolTip("Load sample characters and open Simulation")
+        self.quickstart_button.clicked.connect(self._apply_quickstart)
 
-        self.tabs.addTab(self.home_tab, "Home")
+        self.reload_button = QPushButton("Reload last setup")
+        self.reload_button.setFixedWidth(160)
+        self.reload_button.setToolTip("Re-apply the last saved settings and templates")
+        self.reload_button.clicked.connect(self._reload_last_setup)
+        start_row.addStretch()
+        start_row.addWidget(self.start_button)
+        start_row.addWidget(self.quickstart_button)
+        start_row.addWidget(self.reload_button)
+        start_row.addStretch()
+        root_layout.addLayout(start_row)
+        root_layout.addWidget(self.tabs)
 
         # Character Editor Tab
         self.character_tab = QWidget()
         char_layout = QVBoxLayout()
+        char_layout.setContentsMargins(12, 12, 12, 12)
+        char_layout.setSpacing(10)
         self.character_tab.setLayout(char_layout)
 
         editors_layout = QHBoxLayout()
@@ -342,22 +407,30 @@ class MainWindow(QWidget):
             template_row.addWidget(btn)
         template_row.addStretch()
         char_layout.addLayout(template_row)
-        self.tabs.addTab(self.character_tab, "Character")
+        # Wrap Character tab in a scroll area to fit standard screen size
+        self.character_tab_scroll = QScrollArea()
+        self.character_tab_scroll.setWidgetResizable(True)
+        self.character_tab_scroll.setWidget(self.character_tab)
+        self.tabs.addTab(self.character_tab_scroll, "Character")
 
         # Simulation Tab
         self.simulation_tab = QWidget()
         sim_layout = QVBoxLayout()
+        sim_layout.setContentsMargins(12, 12, 12, 12)
+        sim_layout.setSpacing(10)
         self.simulation_tab.setLayout(sim_layout)
 
         controls_row = QHBoxLayout()
         self.simulate_button = QPushButton("Run full combat")
         self.simulate_button.clicked.connect(self.run_simulation)
+        self.simulate_button.setToolTip("Simulate the current setup (Ctrl+S to save setup)")
         controls_row.addWidget(self.simulate_button)
 
         controls_row.addWidget(QLabel("Theme:"))
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Dark", "Light"])
         self.theme_combo.setMinimumWidth(110)
+        self.theme_combo.setToolTip("Switch between dark and light themes")
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         controls_row.addWidget(self.theme_combo)
 
@@ -365,33 +438,64 @@ class MainWindow(QWidget):
         self.time_combo = QComboBox()
         self.time_combo.addItems(["Day", "Night"])
         self.time_combo.setMinimumWidth(110)
+        self.time_combo.setToolTip("Apply day or night modifiers")
         self.time_combo.currentIndexChanged.connect(self._on_time_changed)
         controls_row.addWidget(self.time_combo)
 
+        controls_row.addWidget(QLabel("Surprise:"))
+        self.surprise_combo = QComboBox()
+        self.surprise_combo.addItems(["None", "Party Surprised", "Party Ambushes"])
+        self.surprise_combo.setMinimumWidth(150)
+        self.surprise_combo.setToolTip("Apply surprise/ambush modifiers to initiative")
+        self.surprise_combo.currentIndexChanged.connect(self._on_surprise_changed)
+        controls_row.addWidget(self.surprise_combo)
+
         controls_row.addStretch()
         sim_layout.addLayout(controls_row)
+
+        prefs_row = QHBoxLayout()
+        self.show_math_check = QCheckBox("Show decision notes")
+        self.show_math_check.setToolTip("Include brief decision math/choices in the log")
+        prefs_row.addWidget(self.show_math_check)
+        prefs_row.addStretch()
+        sim_layout.addLayout(prefs_row)
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([
-            "Full Auto (both AI)",
-            "Player controls Character 1",
+            "Player controls both (Default)",
+            "Full Simulation (Beta)",
+            "Single Simulation (Beta)",
         ])
+        self.mode_combo.setToolTip("Select player-controlled or beta auto modes")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo)
         sim_layout.addLayout(mode_row)
 
+        initiative_row = QHBoxLayout()
+        initiative_row.addWidget(QLabel("Initiative Order:"))
+        self.initiative_label = QLabel("(run a simulation)")
+        initiative_row.addWidget(self.initiative_label)
+        initiative_row.addStretch()
+        sim_layout.addLayout(initiative_row)
+
         player_action_row = QHBoxLayout()
-        player_action_row.addWidget(QLabel("Character 1 actions:"))
+        player_action_row.addWidget(QLabel("Player actions:"))
         self.player_action1_combo = QComboBox()
         self.player_action2_combo = QComboBox()
         for combo in (self.player_action1_combo, self.player_action2_combo):
             combo.addItems(["Attack", "Evade", "Block", "Skip"])
+            combo.setToolTip("Player-selected action for Character 1 when in player mode")
         player_action_row.addWidget(self.player_action1_combo)
         player_action_row.addWidget(self.player_action2_combo)
         sim_layout.addLayout(player_action_row)
         self._set_player_controls_enabled(False)
+        self.replay_snapshots: list[dict] = []
+        self.replay_index = 0
+        self.replay_timer = QTimer(self)
+        self.replay_timer.setInterval(700)
+        self.replay_timer.timeout.connect(self._advance_replay)
 
         # initialize control state based on default mode
         self._on_mode_changed()
@@ -407,6 +511,7 @@ class MainWindow(QWidget):
         self.move_button = QPushButton("Move (Character 1)")
         move_row.addWidget(self.move_button)
         self.move_button.clicked.connect(self.move_attacker)
+        self.move_button.setToolTip("Move Character 1 to the chosen coordinates")
         sim_layout.addLayout(move_row)
 
         # Spell casting disabled; UI elements removed for now
@@ -427,8 +532,8 @@ class MainWindow(QWidget):
         self.status_view.setReadOnly(True)
         self.status_view.setPlaceholderText("Status badges will appear here.")
         self.status_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.status_view.setMaximumHeight(140)
-        self.status_view.setMinimumHeight(90)
+        self.status_view.setMaximumHeight(110)
+        self.status_view.setMinimumHeight(70)
         left_col.addWidget(QLabel("Statuses"))
         left_col.addWidget(self.status_view)
 
@@ -436,95 +541,447 @@ class MainWindow(QWidget):
         self.map_view.setReadOnly(True)
         self.map_view.setPlaceholderText("Post-turn maps will appear here.")
         self.map_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.map_view.setMinimumHeight(320)
+        self.map_view.setMinimumHeight(220)
+        self.map_scene = QGraphicsScene()
+        self.map_canvas = QGraphicsView(self.map_scene)
+        self.map_canvas.setFixedHeight(220)
+        self.map_canvas.setMinimumWidth(300)
+        self.map_canvas.setRenderHints(self.map_canvas.renderHints())
+        self.map_grid = QTableWidget(10, 10)
+        self.map_grid.setFixedHeight(200)
+        self.map_grid.setMinimumWidth(300)
+        self.map_grid.horizontalHeader().setVisible(False)
+        self.map_grid.verticalHeader().setVisible(False)
+        self.map_grid.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.map_grid.setSelectionMode(QTableWidget.NoSelection)
+        self.map_grid.setShowGrid(True)
+        self.map_grid.setToolTip("Map grid (last state)")
+        for c in range(10):
+            self.map_grid.setColumnWidth(c, 28)
+        for r in range(10):
+            self.map_grid.setRowHeight(r, 24)
         right_col.addWidget(QLabel("Map Log"))
         right_col.addWidget(self.map_view)
+        right_col.addWidget(QLabel("Visual Map"))
+        right_col.addWidget(self.map_canvas)
+        right_col.addWidget(QLabel("Map Grid"))
+        right_col.addWidget(self.map_grid)
+        legend = QLabel("Legend: initials = unit, tinted cell = occupied, light cell = empty")
+        legend.setStyleSheet("color: #666;")
+        right_col.addWidget(legend)
+
+        replay_row = QHBoxLayout()
+        self.replay_prev = QPushButton("◀")
+        self.replay_next = QPushButton("▶")
+        self.replay_play = QPushButton("Play")
+        self.replay_slider = QSlider(Qt.Horizontal)
+        self.replay_slider.setMinimum(0)
+        self.replay_slider.setMaximum(0)
+        self.replay_slider.setSingleStep(1)
+        replay_row.addWidget(QLabel("Replay:"))
+        replay_row.addWidget(self.replay_prev)
+        replay_row.addWidget(self.replay_play)
+        replay_row.addWidget(self.replay_next)
+        replay_row.addWidget(self.replay_slider)
+        # Wire up replay controls after widgets are created
+        self.replay_slider.valueChanged.connect(self._on_replay_slider)
+        self.replay_prev.clicked.connect(lambda: self._step_replay(-1))
+        self.replay_next.clicked.connect(lambda: self._step_replay(1))
+        self.replay_play.clicked.connect(self._toggle_replay)
+        right_col.addLayout(replay_row)
 
         log_row.addLayout(left_col)
         log_row.addLayout(right_col)
         sim_layout.addLayout(log_row)
 
-        self.tabs.addTab(self.simulation_tab, "Simulation")
+        # Wrap Simulation tab in a scroll area to fit standard screen size
+        self.simulation_tab_scroll = QScrollArea()
+        self.simulation_tab_scroll.setWidgetResizable(True)
+        self.simulation_tab_scroll.setWidget(self.simulation_tab)
+        self.tabs.addTab(self.simulation_tab_scroll, "Simulation")
 
+        self._load_settings()
+        self._apply_theme()
+        if not getattr(self, "_first_launch_shown", False) and not getattr(self, "_settings_loaded", False):
+            self._first_launch_shown = True
+            self._show_howto()
+
+    def _build_menus(self) -> None:
+        file_menu = self.menu_bar.addMenu("File")
+        new_action = QAction("New Setup", self)
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(self._new_setup)
+        file_menu.addAction(new_action)
+
+        load_action = QAction("Load Setup...", self)
+        load_action.setShortcut("Ctrl+O")
+        load_action.triggered.connect(self._load_setup_from_file)
+        file_menu.addAction(load_action)
+
+        save_action = QAction("Save Setup As...", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._save_setup_as)
+        file_menu.addAction(save_action)
+
+        exit_action = QAction("Exit", self)
+        exit_action.setShortcut("Alt+F4")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        view_menu = self.menu_bar.addMenu("View")
+        toggle_theme = QAction("Toggle Theme", self)
+        toggle_theme.setShortcut("Ctrl+T")
+        toggle_theme.triggered.connect(self._toggle_theme)
+        view_menu.addAction(toggle_theme)
+
+        help_menu = self.menu_bar.addMenu("Help")
+        about_action = QAction("About AvaSim", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+        howto_action = QAction("How to run a simulation", self)
+        howto_action.triggered.connect(self._show_howto)
+        help_menu.addAction(howto_action)
+
+        shortcuts_action = QAction("Keyboard shortcuts", self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+
+        export_logs = QAction("Export Logs...", self)
+        export_logs.setShortcut("Ctrl+E")
+        export_logs.triggered.connect(self._export_logs)
+        file_menu.addAction(export_logs)
+
+    def _toggle_theme(self) -> None:
+        next_theme = "Light" if self.theme_combo.currentText() == "Dark" else "Dark"
+        self.theme_combo.setCurrentText(next_theme)
+
+    def _new_setup(self) -> None:
+        resp = QMessageBox.question(self, "Reset setup", "Reset both characters and settings to defaults?", QMessageBox.Yes | QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+        self.attacker_editor.load_template(self.attacker_editor._blank_template())
+        self.defender_editor.load_template(self.defender_editor._blank_template())
+        self.theme_combo.setCurrentText("Dark")
+        self.time_combo.setCurrentText("Day")
+        self.mode_combo.setCurrentText("Full Auto (both AI)")
+        self.show_math_check.setChecked(False)
+        self._on_mode_changed()
+        self._apply_theme()
+        self._save_settings()
+
+    def _apply_quickstart(self) -> None:
+        data = self.quickstart_setup
+        self.attacker_editor.load_template(data.get("char1", {}))
+        self.defender_editor.load_template(data.get("char2", {}))
+        self._set_combo_text(self.theme_combo, data.get("theme", "Light"))
+        self._set_combo_text(self.time_combo, data.get("time", "Day"))
+        self._set_combo_text(self.mode_combo, data.get("mode", "Full Auto (both AI)"))
+        self.show_math_check.setChecked(data.get("show_math", False))
+        self._on_mode_changed()
+        self.tabs.setCurrentWidget(self.simulation_tab_scroll)
+        self._apply_theme()
+        self._save_settings()
+
+    def _reload_last_setup(self) -> None:
+        # Reload persisted settings and reapply theme; stay on current tab unless user prefers simulation
+        self._load_settings()
         self._apply_theme()
 
+    def _collect_setup_data(self) -> dict:
+        return {
+            "theme": self.theme_combo.currentText(),
+            "time": self.time_combo.currentText(),
+            "mode": self.mode_combo.currentText(),
+            "surprise": self.surprise_combo.currentText(),
+            "char1": self.attacker_editor.to_template(),
+            "char2": self.defender_editor.to_template(),
+            "show_math": self.show_math_check.isChecked(),
+        }
+
+    def _apply_setup_data(self, data: dict) -> None:
+        if not data:
+            return
+        self.attacker_editor.load_template(data.get("char1", {}))
+        self.defender_editor.load_template(data.get("char2", {}))
+        self._set_combo_text(self.theme_combo, data.get("theme", self.theme_combo.currentText()))
+        self._set_combo_text(self.time_combo, data.get("time", self.time_combo.currentText()))
+        self._set_combo_text(self.mode_combo, data.get("mode", self.mode_combo.currentText()))
+        self._set_combo_text(self.surprise_combo, data.get("surprise", self.surprise_combo.currentText()))
+        self.show_math_check.setChecked(bool(data.get("show_math", False)))
+        self._on_theme_changed()
+        self._on_time_changed()
+        self._on_surprise_changed()
+        self._on_mode_changed()
+
+    def _save_setup_as(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Setup", "avasim_setup.json", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            self._write_setup(Path(path), self._collect_setup_data())
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", f"Could not save setup:\n{exc}")
+
+    def _load_setup_from_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Setup", "", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._apply_setup_data(data)
+            self._apply_theme()
+        except Exception as exc:
+            QMessageBox.critical(self, "Load failed", f"Could not load setup:\n{exc}")
+
+    def _write_setup(self, path: Path, data: dict) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def _save_settings(self) -> None:
+        try:
+            self._write_setup(self.settings_path, self._collect_setup_data())
+        except Exception:
+            # avoid blocking close on save failure
+            pass
+
+    def _load_settings(self) -> None:
+        if not self.settings_path.exists():
+            return
+        try:
+            with open(self.settings_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._apply_setup_data(data)
+            self._settings_loaded = True
+        except Exception:
+            pass
+
+    def _set_combo_text(self, combo: QComboBox, text: str) -> None:
+        if text is None:
+            return
+        idx = combo.findText(text)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _show_about(self) -> None:
+        QMessageBox.information(self, "About AvaSim", "AvaSim Combat Sandbox\nWindows-friendly PySide6 desktop app for Avalore-inspired encounters.")
+
+    def _render_action_log(self, lines: list[str]) -> str:
+        def color_for(line: str) -> str:
+            low = line.lower()
+            if "critical" in low or "crit" in low:
+                return "#b22222"
+            if "hit" in low or "damage" in low:
+                return "#d2691e"
+            if "miss" in low or "fail" in low or "graz" in low:
+                return "#555555"
+            if "move" in low or "position" in low:
+                return "#1d6fb6"
+            return "#222222"
+
+        html_lines = []
+        for ln in lines:
+            color = color_for(ln)
+            safe = html.escape(ln)
+            html_lines.append(f"<div style='color:{color}; margin-bottom:2px;'>{safe}</div>")
+        return "".join(html_lines)
+
+    def _render_map_grid(self, tactical_map: TacticalMap | None) -> None:
+        if tactical_map is None:
+            return
+        rows = tactical_map.height
+        cols = tactical_map.width
+        self.map_grid.setRowCount(rows)
+        self.map_grid.setColumnCount(cols)
+        for c in range(cols):
+            self.map_grid.setColumnWidth(c, 28)
+        for r in range(rows):
+            self.map_grid.setRowHeight(r, 24)
+        for y in range(rows):
+            for x in range(cols):
+                occupant = tactical_map.get_occupant(x, y)
+                txt = occupant.character.name[:2] if occupant else ""
+                item = QTableWidgetItem(txt)
+                if occupant:
+                    item.setBackground(QColor("#ffe8c2"))
+                else:
+                    item.setBackground(QColor("#f4f4f4"))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.map_grid.setItem(y, x, item)
+        self.map_grid.resizeColumnsToContents()
+        self.map_grid.resizeRowsToContents()
+
+    def _render_visual_map(self, snapshot: dict | None) -> None:
+        if not snapshot:
+            self.map_scene.clear()
+            return
+        self.map_scene.clear()
+        cell_w = 28
+        cell_h = 24
+        terrain_colors = {
+            "wall": QColor("#444"),
+            "forest": QColor("#2e8b57"),
+            "water": QColor("#3a6ea5"),
+            "mountain": QColor("#7f6f50"),
+            "road": QColor("#c2a16a"),
+            "normal": QColor("#f0ede6"),
+        }
+        highlight_actor = QColor("#ffe8c2")
+        highlight_target = QColor("#ffd1d1")
+        cells = snapshot.get("cells", []) if snapshot else []
+        actor_pos = snapshot.get("actor", {}).get("position") if snapshot else None
+        target_pos = snapshot.get("target", {}).get("position") if snapshot else None
+        for cell in cells:
+            x = cell.get("x", 0)
+            y = cell.get("y", 0)
+            terrain = cell.get("terrain", "normal")
+            occupant = cell.get("occupant")
+            rect_x = x * cell_w
+            rect_y = y * cell_h
+            brush = QBrush(terrain_colors.get(terrain, terrain_colors["normal"]))
+            pen = QPen(QColor("#999"))
+            item = self.map_scene.addRect(rect_x, rect_y, cell_w - 2, cell_h - 2, pen, brush)
+            if actor_pos == (x, y):
+                item.setBrush(QBrush(highlight_actor))
+            if target_pos == (x, y):
+                item.setBrush(QBrush(highlight_target))
+            if occupant:
+                text = self.map_scene.addText(str(occupant)[:2])
+                text.setDefaultTextColor(QColor("#111"))
+                text.setPos(rect_x + 6, rect_y + 4)
+
+    def _show_howto(self) -> None:
+        QMessageBox.information(
+            self,
+            "How to run a simulation",
+            "1) Fill in Character 1 and 2 (or use Quick Start)\n"
+            "2) Pick theme/time, choose mode (AI or player)\n"
+            "3) Click Run full combat; review action/map logs and grid",
+        )
+
+    def _show_shortcuts(self) -> None:
+        QMessageBox.information(
+            self,
+            "Keyboard shortcuts",
+            "Ctrl+N: New setup\nCtrl+O: Load setup\nCtrl+S: Save setup as\nCtrl+E: Export logs\nCtrl+T: Toggle theme\nAlt+F4: Exit",
+        )
+
+    def _export_logs(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export Logs", "avasim_logs.txt", "Text Files (*.txt)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("Action Log\n" + self.action_view.toPlainText() + "\n\n")
+                f.write("Map Log\n" + self.map_view.toPlainText())
+            QMessageBox.information(self, "Export complete", "Logs exported successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not export logs:\n{exc}")
+
+    def closeEvent(self, event) -> None:  # type: ignore
+        self._save_settings()
+        return super().closeEvent(event)
+
     def run_simulation(self):
-        attacker = self.attacker_editor.to_participant()
-        defender = self.defender_editor.to_participant()
-        tactical_map = TacticalMap(10, 10)
-        attacker.position = (0, 0)
-        defender.position = (3, 0)
-        tactical_map.set_occupant(*attacker.position, attacker)
-        tactical_map.set_occupant(*defender.position, defender)
+        try:
+            attacker = self.attacker_editor.to_participant()
+            defender = self.defender_editor.to_participant()
+            tactical_map = TacticalMap(10, 10)
+            attacker.position = (0, 0)
+            defender.position = (3, 0)
+            tactical_map.set_occupant(*attacker.position, attacker)
+            tactical_map.set_occupant(*defender.position, defender)
 
-        engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
-        engine.set_time_of_day(self._time_of_day)
+            engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            engine.set_time_of_day(self._time_of_day)
+            engine.party_surprised = (self.surprise_combo.currentText() == "Party Surprised")
+            engine.party_initiated = (self.surprise_combo.currentText() == "Party Ambushes")
 
-        # Override logger to keep output in-app (no stdout noise)
-        def ui_log(message: str):
-            engine.combat_log.append(message)
+            # Override logger to keep output in-app (no stdout noise)
+            def ui_log(message: str):
+                engine.combat_log.append(message)
 
-        engine.log = ui_log  # type: ignore
+            engine.log = ui_log  # type: ignore
 
-        engine.roll_initiative()
+            engine.roll_initiative()
 
-        turn_limit = 200  # safety to prevent infinite loops
-        turns = 0
-        while not engine.is_combat_ended() and turns < turn_limit:
-            current = engine.get_current_participant()
-            if current is None or current.current_hp <= 0:
+            # Determine simulation length: full or single-turn beta
+            mode_text = self.mode_combo.currentText()
+            turn_limit = 1 if "Single Simulation" in mode_text else 200
+            turns = 0
+            while not engine.is_combat_ended() and turns < turn_limit:
+                current = engine.get_current_participant()
+                if current is None or current.current_hp <= 0:
+                    engine.advance_turn()
+                    turns += 1
+                    continue
+
+                # Choose target: first alive opponent
+                targets = [p for p in engine.participants if p is not current and p.current_hp > 0]
+                if not targets:
+                    break
+                target = targets[0]
+
+                mode_text = self.mode_combo.currentText()
+                player_controls_both = "Player controls" in mode_text and "both" in mode_text.lower()
+                player_controls_attacker = "Player controls Character 1" in mode_text and current is attacker
+                if player_controls_both or player_controls_attacker:
+                    self._execute_player_turn(engine, current, target)
+                else:
+                    self._take_auto_actions(engine, current, target)
+
+                engine._log_map_state(f"End turn: {current.character.name}")
+
                 engine.advance_turn()
                 turns += 1
-                continue
 
-            # Choose target: first alive opponent
-            targets = [p for p in engine.participants if p is not current and p.current_hp > 0]
-            if not targets:
-                break
-            target = targets[0]
+            engine.combat_log.append(engine.get_combat_summary())
 
-            if self.mode_combo.currentText() == "Player controls Character 1" and current is attacker:
-                self._execute_player_turn(engine, current, target)
-            else:
-                self._take_auto_actions(engine, current, target)
-
-            engine._log_map_state(f"End turn: {current.character.name}")
-
-            engine.advance_turn()
-            turns += 1
-
-        engine.combat_log.append(engine.get_combat_summary())
-
-        action_lines = ["Combat finished", f"Turns executed: {turns}", "", "Combat Log:"] + engine.combat_log
-        self.action_view.setPlainText("\n".join(action_lines))
-        self.map_view.setPlainText("\n".join(engine.map_log))
-        self.status_view.setPlainText(self._format_status_badges([attacker, defender]))
+            action_lines = ["Combat finished", f"Turns executed: {turns}", "", "Combat Log:"] + engine.combat_log
+            self.action_view.setHtml(self._render_action_log(action_lines))
+            self.map_view.setPlainText("\n".join(engine.map_log))
+            self.status_view.setHtml(self._format_status_badges([attacker, defender]))
+            self._render_map_grid(engine.tactical_map)
+            self._render_initiative(engine)
+            self._set_replay_data(engine.map_snapshots)
+            self._save_settings()
+        except Exception as exc:
+            QMessageBox.critical(self, "Simulation failed", f"An error occurred while simulating:\n{exc}")
 
     def move_attacker(self):
-        attacker = self.attacker_editor.to_participant()
-        defender = self.defender_editor.to_participant()
-        tactical_map = TacticalMap(10, 10)
-        attacker.position = (0, 0)
-        defender.position = (3, 0)
-        tactical_map.set_occupant(*attacker.position, attacker)
-        tactical_map.set_occupant(*defender.position, defender)
-        engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
-        engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
-        success = engine.action_move(attacker, int(self.move_x.value()), int(self.move_y.value()))
-        if not success:
-            engine.combat_log.append("Move failed.")
-        engine._log_map_state("After move")
-        engine.combat_log.append(engine.get_combat_summary())
-        self.action_view.setPlainText("\n".join(engine.combat_log))
-        self.map_view.setPlainText("\n".join(engine.map_log))
-        self.status_view.setPlainText(self._format_status_badges([attacker, defender]))
+        try:
+            attacker = self.attacker_editor.to_participant()
+            defender = self.defender_editor.to_participant()
+            tactical_map = TacticalMap(10, 10)
+            attacker.position = (0, 0)
+            defender.position = (3, 0)
+            tactical_map.set_occupant(*attacker.position, attacker)
+            tactical_map.set_occupant(*defender.position, defender)
+            engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
+            success = engine.action_move(attacker, int(self.move_x.value()), int(self.move_y.value()))
+            if not success:
+                engine.combat_log.append("Move failed.")
+            engine._log_map_state("After move")
+            engine.combat_log.append(engine.get_combat_summary())
+            self.action_view.setHtml(self._render_action_log(engine.combat_log))
+            self.map_view.setPlainText("\n".join(engine.map_log))
+            self.status_view.setHtml(self._format_status_badges([attacker, defender]))
+            self._render_map_grid(engine.tactical_map)
+            self._save_settings()
+        except Exception as exc:
+            QMessageBox.critical(self, "Move failed", f"An error occurred while moving:\n{exc}")
 
     def cast_spell(self):
         # Spell casting disabled in this UI for now.
-        self.outcome_view.setPlainText("Spell casting is currently disabled.")
+        self.action_view.setPlainText("Spell casting is currently disabled.")
 
     def _on_mode_changed(self):
-        player_mode = self.mode_combo.currentText() == "Player controls Character 1"
+        # Enable controls for any player-controlled mode
+        player_mode = "Player controls" in self.mode_combo.currentText()
         self._set_player_controls_enabled(player_mode)
 
     def _on_theme_changed(self):
@@ -533,6 +990,10 @@ class MainWindow(QWidget):
 
     def _on_time_changed(self):
         self._time_of_day = self.time_combo.currentText().lower()
+
+    def _on_surprise_changed(self):
+        # Map selection to engine flags later during simulation run
+        pass
 
     def _set_player_controls_enabled(self, enabled: bool):
         self.player_action1_combo.setEnabled(enabled)
@@ -558,13 +1019,16 @@ class MainWindow(QWidget):
             text = "#1f1a17"
             accent = "#c1842f"
         style = f"""
-            QWidget {{ background: {bg}; color: {text}; font-family: 'Merriweather', 'Times New Roman', serif; }}
+            QWidget {{ background: {bg}; color: {text}; font-family: 'Segoe UI', 'SF Pro Display', 'Helvetica', 'Arial', sans-serif; }}
             QGroupBox {{ border: 1px solid {accent}; margin-top: 6px; padding: 6px; }}
             QGroupBox::title {{ subcontrol-origin: margin; left: 6px; padding: 0 4px; color: {accent}; font-weight: 600; }}
             QPushButton {{ background: {panel}; border: 1px solid {accent}; padding: 6px 10px; border-radius: 4px; color: {text}; }}
             QPushButton:hover {{ background: {accent}; color: {bg}; }}
             QLineEdit, QComboBox, QSpinBox, QTextEdit {{ background: {panel}; color: {text}; border: 1px solid {accent}; }}
             QLabel {{ color: {text}; }}
+            QTabBar::tab {{ color: #000000; font-weight: 600; }}
+            QTabBar::tab:selected {{ color: #000000; }}
+            QTableWidget {{ gridline-color: {accent}; }}
         """
         self.setStyleSheet(style)
         mono_font = QFont("Courier New")
@@ -579,6 +1043,61 @@ class MainWindow(QWidget):
         log_font.setPointSize(11)
         self.action_view.setFont(log_font)
         self.status_view.setFont(log_font)
+
+    def _render_initiative(self, engine: AvaCombatEngine) -> None:
+        if not engine.turn_order:
+            self.initiative_label.setText("(no initiative)")
+            return
+        names = [p.character.name for p in engine.turn_order]
+        round_info = f"Round {engine.round}" if engine.round else ""
+        self.initiative_label.setText(f"{round_info} | Order: " + " → ".join(names))
+
+    def _set_replay_data(self, snapshots: list[dict]) -> None:
+        self.replay_snapshots = snapshots or []
+        count = len(self.replay_snapshots)
+        self.replay_slider.blockSignals(True)
+        self.replay_slider.setMaximum(max(0, count - 1))
+        self.replay_slider.setValue(max(0, count - 1))
+        self.replay_slider.blockSignals(False)
+        self.replay_index = max(0, count - 1)
+        self.replay_play.setText("Play")
+        if count:
+            self._render_visual_map(self.replay_snapshots[self.replay_index])
+        else:
+            self._render_visual_map(None)
+
+    def _on_replay_slider(self, value: int) -> None:
+        if 0 <= value < len(self.replay_snapshots):
+            self.replay_index = value
+            self._render_visual_map(self.replay_snapshots[self.replay_index])
+
+    def _step_replay(self, delta: int) -> None:
+        if not self.replay_snapshots:
+            return
+        new_idx = min(len(self.replay_snapshots) - 1, max(0, self.replay_index + delta))
+        self.replay_slider.setValue(new_idx)
+
+    def _toggle_replay(self) -> None:
+        if not self.replay_snapshots:
+            return
+        if self.replay_timer.isActive():
+            self.replay_timer.stop()
+            self.replay_play.setText("Play")
+        else:
+            self.replay_play.setText("Pause")
+            self.replay_timer.start()
+
+    def _advance_replay(self) -> None:
+        if not self.replay_snapshots:
+            self.replay_timer.stop()
+            self.replay_play.setText("Play")
+            return
+        next_idx = self.replay_index + 1
+        if next_idx >= len(self.replay_snapshots):
+            self.replay_timer.stop()
+            self.replay_play.setText("Play")
+            return
+        self.replay_slider.setValue(next_idx)
 
     def _save_template(self, editor: CombatantEditor) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save Character Template", "character.json", "JSON Files (*.json)")
@@ -603,29 +1122,35 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Load failed", f"Could not load template:\n{exc}")
 
     def _format_status_badges(self, participants: list[CombatParticipant]) -> str:
-        lines: list[str] = []
+        chips: list[str] = []
         for p in participants:
             if not p:
                 continue
-            name = p.character.name or "?"
+            name = html.escape(p.character.name or "?")
             arch = ", ".join(sorted(getattr(p.character, "archetypes", []))) if hasattr(p, "character") else ""
             hp = f"HP {p.current_hp}/{p.max_hp}"
-            stances = []
+            statuses = []
             if p.is_blocking:
-                stances.append("Blocking")
+                statuses.append(("Blocking", "#264653"))
             if p.is_evading:
-                stances.append("Evading")
+                statuses.append(("Evading", "#2a9d8f"))
             for status in getattr(p, "status_effects", set()):
-                stances.append(status.name.title())
-            badge = ", ".join(stances) if stances else "None"
-            lines.append(f"{name} [{arch}] — {hp} — Status: {badge}")
-        return "\n".join(lines)
+                statuses.append((status.name.title(), "#e76f51"))
+            if not statuses:
+                statuses.append(("Stable", "#6c757d"))
+
+            status_html = " ".join([f"<span style='background:{color};color:white;padding:2px 6px;border-radius:8px;'>{label}</span>" for label, color in statuses])
+            chips.append(f"<div style='margin-bottom:4px;'><b>{name}</b> <span style='color:#888;'>[{arch}]</span> — <span style='color:#555;'>{hp}</span> {status_html}</div>")
+        return "".join(chips)
 
     def _execute_player_turn(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         actions = self._selected_player_actions()
         for action in actions:
             if current.current_hp <= 0 or current.actions_remaining <= 0 or target.current_hp <= 0:
                 break
+            if self.show_math_check.isChecked():
+                dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
+                engine.combat_log.append(f"Decision: Player chose {action} (dist {dist})")
             if action == "Attack":
                 weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
                 if not engine.is_in_range(current, target, weapon):
@@ -641,6 +1166,8 @@ class MainWindow(QWidget):
     def _take_auto_actions(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         # Movement-to-range step before feats/attacks
         weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
+        dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
+        engine.combat_log.append(f"Decision: Auto acting with {weapon.name} (dist {dist}, range {weapon.range_category.name})")
         self._move_to_preferred_range(engine, current, target, weapon)
 
         weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]

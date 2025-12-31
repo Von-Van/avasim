@@ -15,7 +15,9 @@ class AvaCombatEngine:
         self.current_turn_index = 0
         self.combat_log: List[str] = []
         self.map_log: List[str] = []
+        self.map_snapshots: List[Dict[str, Any]] = []
         self.party_initiated: bool = False
+        self.party_surprised: bool = False
         self.environment_underwater: bool = False
         self.environment_darkness: bool = False
         self.time_of_day: str = "day"
@@ -46,6 +48,38 @@ class AvaCombatEngine:
     def log(self, message: str):
         self.combat_log.append(message)
         print(message)
+
+    def _capture_snapshot(self, label: str, actor: Optional[CombatParticipant] = None, target: Optional[CombatParticipant] = None) -> None:
+        if not self.tactical_map:
+            return
+        grid_cells: List[Dict[str, Any]] = []
+        for y in range(self.tactical_map.height):
+            for x in range(self.tactical_map.width):
+                tile = self.tactical_map.get_tile(x, y)
+                occupant = tile.occupant if tile else None
+                grid_cells.append({
+                    "x": x,
+                    "y": y,
+                    "terrain": (tile.terrain_type.name.lower() if tile else "wall"),
+                    "occupant": getattr(occupant.character, "name", None) if occupant else None,
+                })
+        snap = {
+            "label": label,
+            "round": self.round,
+            "turn_index": self.current_turn_index,
+            "width": self.tactical_map.width,
+            "height": self.tactical_map.height,
+            "cells": grid_cells,
+            "actor": {
+                "name": getattr(actor.character, "name", None) if actor else None,
+                "position": getattr(actor, "position", None) if actor else None,
+            },
+            "target": {
+                "name": getattr(target.character, "name", None) if target else None,
+                "position": getattr(target, "position", None) if target else None,
+            },
+        }
+        self.map_snapshots.append(snap)
 
     def _log_map_state(self, label: str = "Map state") -> None:
         if not self.tactical_map:
@@ -78,10 +112,16 @@ class AvaCombatEngine:
             if not hasattr(p, "position"):
                 continue
             legend_parts.append(f"{p.character.name} @ {p.position[0]},{p.position[1]}")
-            self.map_log.append(f"{label} (Round {self.round}, Turn {self.current_turn_index + 1})")
-            self.map_log.extend(rows)
+        self.map_log.append(f"{label} (Round {self.round}, Turn {self.current_turn_index + 1})")
+        self.map_log.extend(rows)
         if legend_parts:
-                self.map_log.append("Legend: " + "; ".join(legend_parts))
+            self.map_log.append("Legend: " + "; ".join(legend_parts))
+        actor = self.get_current_participant()
+        target = None
+        if actor:
+            opponents = [p for p in self.participants if p is not actor and p.current_hp > 0]
+            target = opponents[0] if opponents else None
+        self._capture_snapshot(label, actor, target)
 
     def get_distance(self, p1: CombatParticipant, p2: CombatParticipant) -> int:
         if not self.tactical_map:
@@ -105,6 +145,8 @@ class AvaCombatEngine:
         initiative_rolls = []
         for participant in self.participants:
             roll = participant.get_initiative_roll()
+            if self.party_surprised and not participant.has_feat("Always Ready"):
+                roll = max(0, roll - 5)
             initiative_rolls.append((roll, participant))
             self.log(f"{participant.character.name}: Initiative {roll}")
         initiative_rolls.sort(key=lambda x: x[0], reverse=True)
@@ -113,6 +155,10 @@ class AvaCombatEngine:
         self.round = 1
         if self.turn_order:
             self.turn_order[0].start_turn()
+            if self.party_surprised:
+                for p in self.participants:
+                    if not p.has_feat("Always Ready"):
+                        p.actions_remaining = max(0, p.actions_remaining - 1)
             self._log_map_state("Start of combat")
 
     def get_current_participant(self) -> Optional[CombatParticipant]:
@@ -230,6 +276,7 @@ class AvaCombatEngine:
             attacker.last_hit_success = True
             if attacker.has_feat("LW: Questing Bane") and defender.is_dead and hasattr(defender, "creature_type"):
                 attacker.slain_species.add(defender.creature_type)
+            self._capture_snapshot(f"Crit: {attacker.character.name}", attacker, defender)
             return {"hit": True, "damage": actual_damage, "is_crit": True, "is_graze": False, "blocked": False, "element": attack_element}
         if defender.is_evading:
             evasion_roll, evasion_dice = roll_2d10()
@@ -257,9 +304,11 @@ class AvaCombatEngine:
                         if redirect.get("hit"):
                             self.log(f"Patient Flow redirects the incoming strike to {alt.character.name}!")
                             self.perform_attack(attacker, alt, weapon=weapon, consume_actions=False, suppress_reactions=True)
+                            self._capture_snapshot(f"Redirected: {attacker.character.name}", attacker, defender)
                             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
                 if not suppress_reactions and not getattr(defender, "reactive_maneuver_used", False):
                     self.maybe_riposte(defender, attacker)
+                self._capture_snapshot(f"Evaded: {attacker.character.name}", attacker, defender)
                 return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
             elif total_evasion >= 12:
                 self.log(f"Grazing hit! Attack partially connects.")
@@ -280,6 +329,7 @@ class AvaCombatEngine:
                     if parry_total >= 12 or is_parry_crit:
                         defender.parry_bonus_next_turn = True
                         self.log(f"Parry successful! Grazing hit deflected. {defender.character.name} gains +1 damage on next turn while single-wielding.")
+                        self._capture_snapshot(f"Parry: {attacker.character.name}", attacker, defender)
                         return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
                 if defender.has_feat("Evasive Tactics") and defender.is_critical and not defender.graze_buffer_used:
                     defender.suppress_death_save_once = True
@@ -302,6 +352,7 @@ class AvaCombatEngine:
                     str_ath = attacker.character.get_modifier("Strength", "Athletics")
                     base_unarmed = 2 + (3 if str_ath >= 5 else 2 if str_ath >= 3 else 1 if str_ath >= 1 else 0)
                     attacker.next_unarmed_bonus = "aim" if base_unarmed >= 4 else "damage"
+                self._capture_snapshot(f"Graze: {attacker.character.name}", attacker, defender)
                 return {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": True, "blocked": False, "element": attack_element}
             else:
                 self.log(f"Evasion failed (below 12). Attack proceeds normally.")
@@ -325,6 +376,7 @@ class AvaCombatEngine:
                 self.log(f"{defender.character.name} blocks the attack with their shield!")
                 if not suppress_reactions:
                     self.maybe_shield_bash(defender, attacker)
+                self._capture_snapshot(f"Blocked: {attacker.character.name}", attacker, defender)
                 return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": True, "element": attack_element}
             else:
                 self.log(f"Block failed. Attack proceeds.")
@@ -335,6 +387,7 @@ class AvaCombatEngine:
                 self.log(f"Backline Flanker: next Conceal ignores -3 penalty.")
             if attacker.parry_damage_bonus_active:
                 attacker.parry_damage_bonus_active = False
+            self._capture_snapshot(f"Miss: {attacker.character.name}", attacker, defender)
             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
         self.log(f"Attack hits!")
         if defender.has_status(StatusEffect.VULNERABLE) and weapon.range_category == RangeCategory.MELEE:
@@ -432,6 +485,7 @@ class AvaCombatEngine:
         attacker.last_hit_success = True
         if attacker.has_feat("LW: Questing Bane") and defender.is_dead and hasattr(defender, "creature_type"):
             attacker.slain_species.add(defender.creature_type)
+        self._capture_snapshot(f"Hit: {attacker.character.name}", attacker, defender)
         return {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
 
     def maybe_riposte(self, defender: CombatParticipant, attacker: CombatParticipant):
@@ -713,6 +767,7 @@ class AvaCombatEngine:
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
         actor.free_move_used = True
         self.log(f"{actor.character.name} uses free movement from ({start_x}, {start_y}) to ({dest_x}, {dest_y}) (cost: {total_cost}).")
+        self._capture_snapshot(f"Move: {actor.character.name}", actor, None)
         return True
 
     def action_dash(self, actor: CombatParticipant, dest_x: int, dest_y: int) -> bool:
@@ -767,6 +822,7 @@ class AvaCombatEngine:
         actor.dashed_this_turn = True
         actor.free_move_used = True
         self.log(f"{actor.character.name} dashes from ({start_x}, {start_y}) to ({dest_x}, {dest_y}) (cost: {total_cost}).")
+        self._capture_snapshot(f"Dash: {actor.character.name}", actor, None)
         return True
 
     def action_whirling_devil(self, actor: CombatParticipant) -> bool:
@@ -836,6 +892,7 @@ class AvaCombatEngine:
         self.tactical_map.set_occupant(dest_x, dest_y, actor)
         actor.is_evading = True
         self.log(f"{actor.character.name} vaults to ({dest_x}, {dest_y}) and prepares to Evade.")
+        self._capture_snapshot(f"Vault: {actor.character.name}", actor, None)
         return True
 
     def action_momentum_strike(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:

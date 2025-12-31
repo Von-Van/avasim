@@ -104,6 +104,17 @@ print(result.summary)
 - Web (Streamlit): `streamlit run streamlit_app.py`
 
 If you don’t use Streamlit, keep `PySide6` only; otherwise both are installed via `requirements.txt`.
+
+## Windows Build (PyInstaller)
+
+For a double-clickable Windows app (no console):
+
+```bash
+pip install pyinstaller
+pyinstaller --noconsole --onefile --name AvaSim --icon icon.ico pyside_app.py
+```
+
+The `--onefile` build creates `dist/AvaSim.exe`. If you prefer faster startup, drop `--onefile` for an unpacked `--onedir` build.
     armor=AVALORE_ARMOR["Heavy Armor"],
     shield=AVALORE_SHIELDS["Large Shield"]
 )

@@ -1,0 +1,13 @@
+
+Here are high‑impact next steps to make it feel more impressive (besides finishing magic):
+
+Visual map: Replace the ASCII/grid with a simple tile renderer (QGraphicsView) using colored tiles, occupant icons/initials, hover tooltips, and range/LOS overlays; add path preview arrows for moves.
+Action replay: Add per-action map snapshots and a “Replay” slider/button to step through turns, with colorized highlights for the acting unit and targets.
+Scenario builder: Let users place units/terrain on the grid, set day/night, and save/load encounters; add a few curated presets (duel, skirmish, siege).
+AI transparency: Add a “Show decision math” drawer that explains why an action was chosen (EV, range move, feat hook) and a toggle to turn it off.
+Initiative/surprise: Model an initiative list in the UI with a turn tracker; add an ambush/surprise toggle to apply Always Ready/Skirmishing Party bonuses.
+Packaging polish: Provide a one-click Windows build (PyInstaller spec with icon/version), and keep mac runnable via python3 pyside_app.py; add a Help > Check for Updates link (even if it opens the repo).
+Status chips: Add icons/colors for buffs/debuffs (poison, marked, prone, blocking/evading) and HP/armor bars under each character card.
+Logs: Colorize action log by outcome and collapse long runs; add “Export HTML/CSV log” menu.
+Input guardrails: Gray out invalid actions, show friendly toasts for errors, and confirm resets; autosave last setup and reload on start (already partially done).
+If you want, I can start with the visual tile renderer plus per-action snapshots/replay, then add the initiative tracker and ambush toggle.
