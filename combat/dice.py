@@ -12,5 +12,8 @@ def roll_1d2() -> int:
 def roll_1d3() -> int:
     return random.randint(1, 3)
 
+def roll_1d4() -> int:
+    return random.randint(1, 4)
+
 def roll_1d6() -> int:
     return random.randint(1, 6)

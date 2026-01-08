@@ -178,25 +178,52 @@ class AvaCombatEngine:
             self._log_map_state(f"Start turn: {nxt.character.name}")
 
     def _ensure_weapon_ready(self, attacker: CombatParticipant, weapon: Weapon) -> bool:
+        # Check armor prohibitions first
+        if attacker.armor and attacker.armor.prohibits_weapon(weapon):
+            self.log(f"{attacker.character.name}'s {attacker.armor.name} prohibits using {weapon.name}!")
+            return False
+        
         if weapon.draw_time > 0 and attacker.drawn_weapon != weapon.name:
-            if not attacker.spend_actions(weapon.draw_time):
+            if not attacker.consume_action(weapon.draw_time, action_name=f"draw {weapon.name}"):
                 self.log(f"{attacker.character.name} needs {weapon.draw_time} actions to draw {weapon.name}.")
                 return False
             attacker.drawn_weapon = weapon.name
             self.log(f"{attacker.character.name} draws {weapon.name} (consumed {weapon.draw_time} action(s)).")
         if weapon.load_time > 0 and attacker.loaded_weapon != weapon.name:
-            if not attacker.spend_actions(weapon.load_time):
+            if not attacker.consume_action(weapon.load_time, action_name=f"load {weapon.name}"):
                 self.log(f"{attacker.character.name} needs {weapon.load_time} actions to load {weapon.name}.")
                 return False
             attacker.loaded_weapon = weapon.name
             self.log(f"{attacker.character.name} loads {weapon.name} (consumed {weapon.load_time} action(s)).")
         return True
 
+    def _ensure_can_act(self, participant: CombatParticipant, action_cost: int = 0, is_limited: bool = False) -> bool:
+        """Validate participant can take an action (not dead, has actions)."""
+        if participant.is_dead:
+            self.log(f"{participant.character.name} is dead and cannot act.")
+            return False
+        if participant.current_hp <= 0 and not participant.is_critical:
+            self.log(f"{participant.character.name} is at 0 HP.")
+            return False
+        if action_cost > 0 and not participant.validate_action_cost(action_cost, is_limited):
+            self.log(f"{participant.character.name} lacks sufficient actions ({participant.actions_remaining} remaining, {action_cost} needed).")
+            return False
+        return True
+
     def perform_attack(self, attacker: CombatParticipant, defender: CombatParticipant, weapon: Optional[Weapon] = None, accuracy_modifier: int = 0, is_dual_strike: bool = False, consume_actions: bool = True, ignore_quickfooted: bool = False, bypass_graze: bool = False, force_non_ap: bool = False, ignore_shieldmaster: bool = False, half_damage: bool = False, suppress_reactions: bool = False, allow_death_save_override: Optional[bool] = None) -> Dict[str, Any]:
         if weapon is None:
             weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
         allow_death_save = True if allow_death_save_override is None else allow_death_save_override
+        # Validate can act
         if not self._ensure_can_act(attacker):
+            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+        # Check weapon requirements
+        if not attacker.can_use_weapon(weapon):
+            self.log(f"{attacker.character.name} does not meet requirements for {weapon.name}!")
+            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+        # Check armor prohibitions (heavy armor + bows)
+        if attacker.armor and attacker.armor.prohibits_weapon(weapon):
+            self.log(f"{attacker.armor.name} prevents using {weapon.name}!")
             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
         if getattr(attacker, "sentinel_needs_lift", False) and weapon.name in {"Spear", "Polearm", "Javelin"}:
             if attacker.actions_remaining < 1:
@@ -237,7 +264,7 @@ class AvaCombatEngine:
                         lineage_aim_bonus = 2
                 if attacker.active_lineage_element:
                     attack_element = attacker.active_lineage_element
-        if consume_actions and not attacker.spend_actions(weapon.actions_required):
+        if consume_actions and not attacker.consume_action(weapon.actions_required, action_name=f"attack with {weapon.name}"):
             self.log(f"{attacker.character.name} lacks actions to attack with {weapon.name}.")
             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
         self.log(f"\n{attacker.character.name} attacks {defender.character.name} with {weapon.name}")
@@ -246,7 +273,11 @@ class AvaCombatEngine:
             rakish_aim_bonus = 1
         attack_roll, dice = roll_2d10()
         is_crit = (dice[0] == 10 and dice[1] == 10)
-        total_attack = attack_roll + weapon.accuracy_bonus + accuracy_modifier + dueling_bonus + rakish_aim_bonus + lineage_aim_bonus
+        
+        # Apply weapon requirement penalty if not met
+        requirement_penalty = attacker.get_weapon_penalty(weapon)
+        
+        total_attack = attack_roll + weapon.accuracy_bonus + accuracy_modifier + dueling_bonus + rakish_aim_bonus + lineage_aim_bonus + requirement_penalty
         total_attack += getattr(attacker, "temp_attack_bonus", 0)
         total_attack -= getattr(attacker, "mockery_penalty_total", 0)
         if defender.has_status(StatusEffect.HIDDEN) and not attacker.has_feat("Precise Senses"):
@@ -690,28 +721,13 @@ class AvaCombatEngine:
             reach = max(reach, 2)
         return dist <= reach
 
-    def _maybe_opportunity_attacks(self, mover: CombatParticipant, dest: Tuple[int, int]):
-        if not self.tactical_map:
-            return
-        start = mover.position
-        for other in self.participants:
-            if other is mover:
-                continue
-            if not self._threatens(other, start):
-                continue
-            if self._threatens(other, dest):
-                continue
-            acc_mod = 0
-            if other.has_feat("Steadfast Defender"):
-                if self._has_shield_wall(other):
-                    acc_mod = 1
-            self.log(f"{other.character.name} makes an opportunity attack on {mover.character.name}!")
-            self.perform_attack(other, mover, weapon=other.weapon_main, consume_actions=False, accuracy_modifier=acc_mod)
-
     def action_evade(self, actor: CombatParticipant) -> bool:
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if actor.is_blocking:
+            self.log(f"{actor.character.name} cannot evade while blocking!")
+            return False
+        if not actor.consume_action(1, action_name="evade"):
             self.log(f"{actor.character.name} has no actions left to Evade.")
             return False
         actor.is_evading = True
@@ -753,7 +769,6 @@ class AvaCombatEngine:
             self.tactical_map.clear_occupant(cx, cy)
             for i in range(1, len(path)):
                 nx, ny = path[i]
-                self._maybe_opportunity_attacks(actor, (nx, ny))
                 actor.position = (nx, ny)
                 self.tactical_map.set_occupant(nx, ny, actor)
                 self._trigger_whirling_strikes(actor)
@@ -761,7 +776,6 @@ class AvaCombatEngine:
                     self.tactical_map.clear_occupant(nx, ny)
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
         else:
-            self._maybe_opportunity_attacks(actor, (dest_x, dest_y))
             self.tactical_map.clear_occupant(start_x, start_y)
             actor.position = (dest_x, dest_y)
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
@@ -773,7 +787,7 @@ class AvaCombatEngine:
     def action_dash(self, actor: CombatParticipant, dest_x: int, dest_y: int) -> bool:
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, action_name="dash"):
             self.log(f"{actor.character.name} needs 1 action to Dash.")
             return False
         if not self.tactical_map:
@@ -807,7 +821,6 @@ class AvaCombatEngine:
             self.tactical_map.clear_occupant(cx, cy)
             for i in range(1, len(path)):
                 nx, ny = path[i]
-                self._maybe_opportunity_attacks(actor, (nx, ny))
                 actor.position = (nx, ny)
                 self.tactical_map.set_occupant(nx, ny, actor)
                 self._trigger_whirling_strikes(actor)
@@ -815,7 +828,6 @@ class AvaCombatEngine:
                     self.tactical_map.clear_occupant(nx, ny)
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
         else:
-            self._maybe_opportunity_attacks(actor, (dest_x, dest_y))
             self.tactical_map.clear_occupant(start_x, start_y)
             actor.position = (dest_x, dest_y)
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
@@ -860,7 +872,7 @@ class AvaCombatEngine:
             return False
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, action_name="vault"):
             self.log(f"{actor.character.name} needs 1 action to Vault.")
             return False
         if not self.tactical_map:
@@ -886,7 +898,6 @@ class AvaCombatEngine:
         if total_cost > movement_allowance:
             self.log(f"{actor.character.name} cannot reach ({dest_x}, {dest_y}) - needs {total_cost} movement, has {movement_allowance}.")
             return False
-        self._maybe_opportunity_attacks(actor, (dest_x, dest_y))
         self.tactical_map.clear_occupant(start_x, start_y)
         actor.position = (dest_x, dest_y)
         self.tactical_map.set_occupant(dest_x, dest_y, actor)
@@ -900,13 +911,10 @@ class AvaCombatEngine:
             return {"used": False}
         if not attacker.dashed_this_turn:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
         weapon = AVALORE_WEAPONS["Unarmed"]
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, is_limited=True, action_name="momentum strike"):
             self.log(f"{attacker.character.name} lacks actions for Momentum Strike.")
             return {"used": False}
         res = self.perform_attack(attacker, defender, weapon=weapon)
@@ -921,12 +929,9 @@ class AvaCombatEngine:
     def action_feint(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
         if not attacker.has_feat("Feint"):
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, is_limited=True, action_name="feint"):
             self.log(f"{attacker.character.name} lacks actions for Feint.")
             return {"used": False}
         weapon = AVALORE_WEAPONS["Unarmed"]
@@ -936,11 +941,9 @@ class AvaCombatEngine:
     def action_rousing_inspiration(self, actor: CombatParticipant) -> Dict[str, Any]:
         if not actor.has_feat("Rousing Inspiration"):
             return {"used": False}
-        if not actor.take_limited_action():
-            return {"used": False}
         if not self._ensure_can_act(actor):
             return {"used": False}
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, is_limited=True, action_name="rousing inspiration"):
             return {"used": False}
         granted = 0
         if not self.tactical_map:
@@ -962,11 +965,9 @@ class AvaCombatEngine:
     def action_commanding_inspiration(self, actor: CombatParticipant) -> Dict[str, Any]:
         if not actor.has_feat("Commanding Inspiration"):
             return {"used": False}
-        if not actor.take_limited_action():
-            return {"used": False}
         if not self._ensure_can_act(actor):
             return {"used": False}
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, is_limited=True, action_name="commanding inspiration"):
             return {"used": False}
         granted = 0
         for p in self.participants:
@@ -989,11 +990,9 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Arming Sword", "Dagger"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, is_limited=True, action_name="piercing strike"):
             return {"used": False}
         ap = True
         dmg_bonus = 0
@@ -1018,7 +1017,7 @@ class AvaCombatEngine:
             return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, action_name="hilt strike"):
             self.log(f"{attacker.character.name} lacks actions for Hilt Strike.")
             return {"used": False}
         half_damage = (base_weapon.damage + 1) // 2
@@ -1033,9 +1032,6 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Recurve Bow", "Longbow"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
         if self.tactical_map:
@@ -1043,7 +1039,7 @@ class AvaCombatEngine:
             if dist > 1:
                 self.log(f"{attacker.character.name} is not at melee distance for Ranger's Gambit.")
                 return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, is_limited=True, action_name="ranger's gambit"):
             self.log(f"{attacker.character.name} lacks actions for Ranger's Gambit.")
             return {"used": False}
         if not self._ensure_weapon_ready(attacker, weapon):
@@ -1060,7 +1056,7 @@ class AvaCombatEngine:
     def action_shove(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, action_name="shove"):
             self.log(f"{attacker.character.name} lacks actions to Shove.")
             return {"used": False}
         roll, dice = roll_2d10()
@@ -1083,7 +1079,7 @@ class AvaCombatEngine:
     def action_topple(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, action_name="topple"):
             self.log(f"{attacker.character.name} lacks actions to Topple.")
             return {"used": False}
         roll, dice = roll_2d10()
@@ -1135,7 +1131,7 @@ class AvaCombatEngine:
             return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(2):
+        if not attacker.consume_action(2, is_limited=True, action_name="trick shot"):
             self.log(f"{attacker.character.name} needs 2 actions for Trick Shot.")
             return {"used": False}
         shot_weapon = weapon
@@ -1163,12 +1159,9 @@ class AvaCombatEngine:
     def action_two_birds_one_stone(self, attacker: CombatParticipant, first: CombatParticipant, weapon: Weapon) -> Dict[str, Any]:
         if weapon.name not in {"Crossbow", "Spellbook"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="two birds one stone"):
             self.log(f"{attacker.character.name} lacks actions for Two Birds One Stone.")
             return {"used": False}
         res1 = self.perform_attack(attacker, first, weapon=weapon)
@@ -1283,7 +1276,10 @@ class AvaCombatEngine:
         if not actor.shield:
             self.log(f"{actor.character.name} has no shield to block with.")
             return False
-        if not actor.spend_actions(1):
+        if actor.is_evading:
+            self.log(f"{actor.character.name} cannot block while evading!")
+            return False
+        if not actor.consume_action(1, action_name="block"):
             self.log(f"{actor.character.name} has no actions left to Block.")
             return False
         actor.is_blocking = True
@@ -1312,7 +1308,7 @@ class AvaCombatEngine:
             return False
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, action_name="second wind"):
             self.log(f"{actor.character.name} has no actions left for Second Wind.")
             return False
         gained = max(0, actor.character.get_modifier("Strength", "Fortitude") + 2)
@@ -1325,9 +1321,6 @@ class AvaCombatEngine:
     def action_dual_striker(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
         if not attacker.has_feat("Dual Striker"):
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
         main = attacker.weapon_main
@@ -1339,7 +1332,9 @@ class AvaCombatEngine:
         if main.name not in eligible or off.name not in eligible:
             self.log(f"Weapons not eligible for Dual Striker.")
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(1, is_limited=True, action_name="dual striker"):
             self.log(f"{attacker.character.name} lacks actions for Dual Striker.")
             return {"used": False}
         death_save_used = False
@@ -1355,12 +1350,9 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Recurve Bow", "Longbow"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="volley"):
             self.log(f"{attacker.character.name} lacks actions for Volley.")
             return {"used": False}
         res1 = self.perform_attack(attacker, defender, weapon=weapon, accuracy_modifier=-1)
@@ -1373,12 +1365,9 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Arming Sword", "Dagger"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, is_limited=True, action_name="armor piercer"):
             self.log(f"{attacker.character.name} lacks actions for Armor Piercer.")
             return {"used": False}
         ap = True
@@ -1400,12 +1389,9 @@ class AvaCombatEngine:
             return False
         if not actor.shield:
             return False
-        if not actor.take_limited_action():
-            self.log(f"{actor.character.name} already used limited action this turn.")
-            return False
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, is_limited=True, action_name="bastion stance"):
             self.log(f"{actor.character.name} has no actions left for Bastion Stance.")
             return False
         actor.is_blocking = True
@@ -1418,12 +1404,9 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Whip", "Recurve Bow", "Crossbow"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="hamstring"):
             self.log(f"{attacker.character.name} lacks actions for Hamstring.")
             return {"used": False}
         result = self.perform_attack(attacker, defender, weapon=weapon, accuracy_modifier=-1, consume_actions=False)
@@ -1436,12 +1419,9 @@ class AvaCombatEngine:
     def action_patient_flow(self, actor: CombatParticipant) -> bool:
         if not actor.has_feat("Patient Flow"):
             return False
-        if not actor.take_limited_action():
-            self.log(f"{actor.character.name} already used a limited action this turn.")
-            return False
         if not self._ensure_can_act(actor):
             return False
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, is_limited=True, action_name="patient flow"):
             self.log(f"{actor.character.name} has no actions left for Patient Flow.")
             return False
         actor.is_evading = True
@@ -1454,14 +1434,11 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Longbow", "Crossbow", "Sling"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
         if mode not in {"dash", "evade"}:
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="quickdraw"):
             self.log(f"{attacker.character.name} lacks actions for Quickdraw.")
             return {"used": False}
         if mode == "dash":
@@ -1504,7 +1481,6 @@ class AvaCombatEngine:
             walk.append((x, y))
         if len(walk) <= 1:
             return
-        self._maybe_opportunity_attacks(actor, walk[-1])
         self.tactical_map.clear_occupant(sx, sy)
         actor.position = walk[-1]
         self.tactical_map.set_occupant(actor.position[0], actor.position[1], actor)
@@ -1515,7 +1491,7 @@ class AvaCombatEngine:
             return {"used": False}
         if not self._ensure_can_act(actor):
             return {"used": False}
-        if not actor.spend_actions(1):
+        if not actor.consume_action(1, action_name="vicious mockery"):
             return {"used": False}
         prev = getattr(target, "mockery_penalty_total", 0)
         target.mockery_penalty_total = min(3, prev + 1)
@@ -1528,12 +1504,9 @@ class AvaCombatEngine:
             return {"used": False}
         if weapon.name not in {"Greatsword", "Polearm", "Staff"}:
             return {"used": False}
-        if not attacker.take_limited_action():
-            self.log(f"{attacker.character.name} already used a limited action this turn.")
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="galestorm strike"):
             self.log(f"{attacker.character.name} lacks actions for Galestorm Strike.")
             return {"used": False}
         extra = getattr(attacker, "evades_prev_turn", 0)
@@ -1551,11 +1524,9 @@ class AvaCombatEngine:
         allowed = {"Throwing Knife", "Meteor Hammer", "Sling", "Arcane Wand"}
         if weapon.name not in allowed:
             return {"used": False}
-        if not attacker.take_limited_action():
-            return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(weapon.actions_required):
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="fanning blade"):
             self.log(f"{attacker.character.name} lacks actions for Fanning Blade.")
             return {"used": False}
         results: List[Tuple[CombatParticipant, Dict[str, Any]]] = []
@@ -1585,15 +1556,15 @@ class AvaCombatEngine:
     def action_lineage_lacuna(self, actor: CombatParticipant, center_x: int, center_y: int) -> Dict[str, Any]:
         if not actor.has_feat("LW: Lacuna"):
             return {"used": False}
-        if actor.lacuna_used_scene:
+        if not actor.can_use_limited("Lacuna", per_scene=True, limit=1):
+            self.log(f"{actor.character.name} already used Lacuna this scene.")
             return {"used": False}
         if not self._ensure_can_act(actor):
             return {"used": False}
-        if not actor.spend_actions(2):
+        if not actor.consume_action(2, is_limited=True, action_name="lacuna"):
             return {"used": False}
         if not self.tactical_map:
             return {"used": False}
-        actor.lacuna_used_scene = True
         lw_count = self._count_lineage_feats(actor)
         affected = 0
         for p in self.participants:
@@ -1619,7 +1590,7 @@ class AvaCombatEngine:
             return {"used": False}
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.spend_actions(1):
+        if not attacker.consume_action(1, action_name="throw small blade"):
             return {"used": False}
         throw_weapon = AVALORE_WEAPONS.get("Throwing Knife")
         if not throw_weapon:

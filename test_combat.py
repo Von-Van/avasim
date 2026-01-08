@@ -334,7 +334,7 @@ class TestFeatBehaviors(unittest.TestCase):
     def test_harmonized_arsenal_throw(self):
         """Harmonized Arsenal allows throwing small blade with +1 aim."""
         char = Character("KnifeThrower")
-        p1 = CombatParticipant(char, 20, 20, weapon_main=AVALORE_WEAPONS["Dagger"], feats=[AVALORE_FEATS["Harmonized Arsenal"]])
+        p1 = CombatParticipant(char, 20, 20, weapon_main=AVALORE_WEAPONS["Small Weapon"], feats=[AVALORE_FEATS["Harmonized Arsenal"]])
         p2 = CombatParticipant(Character("Target"), 20, 20)
         p1.actions_remaining = 2
         engine = AvaCombatEngine([p1, p2])

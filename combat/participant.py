@@ -73,6 +73,32 @@ class CombatParticipant:
     weapons_equipped: List[str] = field(default_factory=list)
     loaded_weapon: Optional[str] = None
     drawn_weapon: Optional[str] = None
+    lifted_weapon: Optional[str] = None
+
+    def validate_action_cost(self, cost: int, is_limited: bool = False) -> bool:
+        """Check if character can afford the action cost."""
+        if cost > self.actions_remaining:
+            return False
+        if is_limited and self.limited_action_used:
+            return False
+        return True
+
+    def consume_action(self, cost: int, is_limited: bool = False, action_name: str = "") -> bool:
+        """Consume actions and mark limited if applicable. Returns success."""
+        if not self.validate_action_cost(cost, is_limited):
+            return False
+        self.actions_remaining -= cost
+        if is_limited:
+            self.limited_action_used = True
+        if self.is_critical and action_name not in {"dash", "evade", "block"}:
+            # Critical state: most actions trigger death save
+            if self.has_feat("Death's Dance") and not self.free_action_while_critical_used:
+                self.free_action_while_critical_used = True
+            elif self.has_feat("Evasive Tactics") and action_name in {"riposte", "parry"}:
+                pass  # No death save for these
+            else:
+                self.last_death_save_triggered = True
+        return True
 
     def get_evasion_modifier(self) -> int:
         base = self.character.get_modifier("Dexterity", "Acrobatics")
@@ -147,6 +173,7 @@ class CombatParticipant:
         self.limited_action_used = False
         self.is_evading = False
         self.is_blocking = False
+        self.lifted_weapon = None  # Reset lift state each turn
         self.feat_uses_this_turn.clear()
         self.limited_used_turn.clear()
         self.temp_attack_bonus = 0
@@ -231,10 +258,31 @@ class CombatParticipant:
         return True
 
     def can_use_weapon(self, weapon: Weapon) -> bool:
+        """Check if character can use weapon (requirements + armor restrictions)."""
         if not weapon.meets_requirements(self.character):
             return False
         if self.armor and self.armor.prohibits_weapon(weapon):
             return False
+        return True
+
+    def get_weapon_penalty(self, weapon: Weapon) -> int:
+        """Get accuracy penalty for not meeting weapon requirements."""
+        if weapon.meets_requirements(self.character):
+            return 0
+        return -2  # Standard penalty for unmet requirements
+
+    def can_dual_wield(self) -> bool:
+        """Check if current loadout allows dual wielding."""
+        if not self.weapon_main or not self.weapon_offhand:
+            return False
+        if self.weapon_main.is_two_handed or self.weapon_offhand.is_two_handed:
+            return False
+        return True
+
+    def enforce_block_evade_exclusivity(self) -> bool:
+        """Ensure block and evade aren't both active. Returns False if conflict."""
+        if self.is_blocking and self.is_evading:
+            return False  # Cannot do both
         return True
 
     def equip_weapon(self, weapon_name: str, offhand: bool = False) -> bool:
@@ -256,28 +304,40 @@ class CombatParticipant:
     def cover_bonus(self, cover: str) -> int:
         return {"none": 0, "half": 2, "three_quarter": 4, "full": 99}.get(cover, 0)
 
-    def take_damage(self, amount: int, armor_piercing: bool = False, allow_death_save: bool = True) -> int:
+    def take_damage(self, amount: int, armor_piercing: bool = False, allow_death_save: bool = True, bypass_graze: bool = False) -> int:
+        """Apply damage with armor soak, temp HP, and death save checks."""
         from .dice import roll_2d10
         self.last_death_save_triggered = False
         if amount <= 0:
             return 0
+        # Apply armor soak unless AP
         if not armor_piercing and self.armor:
             meets_req = self.armor.meets_requirements(self.character)
             soak = self.armor.get_soak_value(meets_requirement=meets_req)
             amount = max(0, amount - soak)
+        # Grazing hits and armor interaction
+        if not bypass_graze and self.armor:
+            # Medium/Heavy armor: no graze benefit (full damage)
+            # Light armor: graze can halve damage (handled in attack resolution)
+            pass
+        # Temp HP absorbs first
         if self.temp_hp > 0 and amount > 0:
             absorbed = min(self.temp_hp, amount)
             self.temp_hp -= absorbed
             amount -= absorbed
+        # Apply to real HP
         self.current_hp = max(0, self.current_hp - amount)
+        # Check for critical/death
         if self.current_hp == 0:
             if self.is_critical:
+                # Already critical: damage triggers death save
                 if allow_death_save and not self.suppress_death_save_once:
                     self.last_death_save_triggered = True
                     self.resolve_death_save()
                 if self.suppress_death_save_once:
                     self.suppress_death_save_once = False
             else:
+                # First time at 0 HP: become critical
                 self.is_critical = True
         return amount
 
