@@ -45,6 +45,15 @@ from combat import (
     TacticalMap,
 )
 from combat.enums import RangeCategory, StatusEffect
+from ui import (
+    Theme,
+    ThemeManager,
+    FontConfig,
+    IconProvider,
+    ProgressIndicator,
+    TextHighlighter,
+    TacticalMapWidget,
+)
 
 
 class CombatantEditor(QGroupBox):
@@ -302,7 +311,8 @@ class MainWindow(QWidget):
         self.resize(1000, 700)
         self.setMinimumSize(1000, 700)
 
-        self._is_dark = True
+        # Initialize theme manager
+        self.theme_manager = ThemeManager(Theme.DARK)
         self._time_of_day = "day"
         appdata = Path(os.environ.get("APPDATA", ""))
         self.settings_path = (appdata / "AvaSim" / "settings.json") if appdata.exists() else (Path.home() / ".avasim_settings.json")
@@ -359,16 +369,19 @@ class MainWindow(QWidget):
         # Start button (centered) to jump to Character tab
         start_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
+        self.start_button.setIcon(IconProvider.get_icon("play"))
         self.start_button.setFixedWidth(140)
         self.start_button.setToolTip("Go to Character setup")
         self.start_button.clicked.connect(lambda: self.tabs.setCurrentWidget(self.character_tab_scroll))
 
         self.quickstart_button = QPushButton("Quick Start Duel")
+        self.quickstart_button.setIcon(IconProvider.get_icon("sword"))
         self.quickstart_button.setFixedWidth(160)
         self.quickstart_button.setToolTip("Load sample characters and open Simulation")
         self.quickstart_button.clicked.connect(self._apply_quickstart)
 
         self.reload_button = QPushButton("Reload last setup")
+        self.reload_button.setIcon(IconProvider.get_icon("refresh"))
         self.reload_button.setFixedWidth(160)
         self.reload_button.setToolTip("Re-apply the last saved settings and templates")
         self.reload_button.clicked.connect(self._reload_last_setup)
@@ -396,12 +409,16 @@ class MainWindow(QWidget):
 
         template_row = QHBoxLayout()
         self.save_c1_btn = QPushButton("Save Character 1")
+        self.save_c1_btn.setIcon(IconProvider.get_icon("save"))
         self.save_c1_btn.clicked.connect(lambda: self._save_template(self.attacker_editor))
         self.load_c1_btn = QPushButton("Load Character 1")
+        self.load_c1_btn.setIcon(IconProvider.get_icon("load"))
         self.load_c1_btn.clicked.connect(lambda: self._load_template(self.attacker_editor))
         self.save_c2_btn = QPushButton("Save Character 2")
+        self.save_c2_btn.setIcon(IconProvider.get_icon("save"))
         self.save_c2_btn.clicked.connect(lambda: self._save_template(self.defender_editor))
         self.load_c2_btn = QPushButton("Load Character 2")
+        self.load_c2_btn.setIcon(IconProvider.get_icon("load"))
         self.load_c2_btn.clicked.connect(lambda: self._load_template(self.defender_editor))
         for btn in (self.save_c1_btn, self.load_c1_btn, self.save_c2_btn, self.load_c2_btn):
             template_row.addWidget(btn)
@@ -417,49 +434,61 @@ class MainWindow(QWidget):
         self.simulation_tab = QWidget()
         sim_layout = QVBoxLayout()
         sim_layout.setContentsMargins(12, 12, 12, 12)
-        sim_layout.setSpacing(10)
+        sim_layout.setSpacing(12)
         self.simulation_tab.setLayout(sim_layout)
 
-        controls_row = QHBoxLayout()
+        # Main simulation control
+        run_row = QHBoxLayout()
         self.simulate_button = QPushButton("Run full combat")
+        self.simulate_button.setIcon(IconProvider.get_icon("play"))
         self.simulate_button.clicked.connect(self.run_simulation)
         self.simulate_button.setToolTip("Simulate the current setup (Ctrl+S to save setup)")
-        controls_row.addWidget(self.simulate_button)
+        run_row.addWidget(self.simulate_button)
+        run_row.addStretch()
+        sim_layout.addLayout(run_row)
 
-        controls_row.addWidget(QLabel("Theme:"))
+        # Settings section
+        settings_group = QGroupBox("Simulation Settings")
+        settings_layout = QVBoxLayout()
+        settings_layout.setSpacing(10)
+        
+        # Row 1: Theme and Time
+        env_row = QHBoxLayout()
+        env_row.addWidget(QLabel("Theme:"))
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Dark", "Light"])
         self.theme_combo.setMinimumWidth(110)
+        self.theme_combo.setMaximumWidth(150)
         self.theme_combo.setToolTip("Switch between dark and light themes")
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        controls_row.addWidget(self.theme_combo)
-
-        controls_row.addWidget(QLabel("Time of Day:"))
+        env_row.addWidget(self.theme_combo)
+        
+        env_row.addSpacing(20)
+        env_row.addWidget(QLabel("Time of Day:"))
         self.time_combo = QComboBox()
         self.time_combo.addItems(["Day", "Night"])
         self.time_combo.setMinimumWidth(110)
+        self.time_combo.setMaximumWidth(150)
         self.time_combo.setToolTip("Apply day or night modifiers")
         self.time_combo.currentIndexChanged.connect(self._on_time_changed)
-        controls_row.addWidget(self.time_combo)
-
-        controls_row.addWidget(QLabel("Surprise:"))
+        env_row.addWidget(self.time_combo)
+        env_row.addStretch()
+        settings_layout.addLayout(env_row)
+        
+        # Row 2: Surprise
+        surprise_row = QHBoxLayout()
+        surprise_row.addWidget(QLabel("Surprise:"))
         self.surprise_combo = QComboBox()
         self.surprise_combo.addItems(["None", "Party Surprised", "Party Ambushes"])
         self.surprise_combo.setMinimumWidth(150)
+        self.surprise_combo.setMaximumWidth(200)
         self.surprise_combo.setToolTip("Apply surprise/ambush modifiers to initiative")
         self.surprise_combo.currentIndexChanged.connect(self._on_surprise_changed)
-        controls_row.addWidget(self.surprise_combo)
-
-        controls_row.addStretch()
-        sim_layout.addLayout(controls_row)
-
-        prefs_row = QHBoxLayout()
-        self.show_math_check = QCheckBox("Show decision notes")
-        self.show_math_check.setToolTip("Include brief decision math/choices in the log")
-        prefs_row.addWidget(self.show_math_check)
-        prefs_row.addStretch()
-        sim_layout.addLayout(prefs_row)
-
+        surprise_row.addWidget(self.surprise_combo)
+        surprise_row.addStretch()
+        settings_layout.addLayout(surprise_row)
+        
+        # Row 3: Mode
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
@@ -468,28 +497,75 @@ class MainWindow(QWidget):
             "Full Simulation (Beta)",
             "Single Simulation (Beta)",
         ])
+        self.mode_combo.setMinimumWidth(200)
         self.mode_combo.setToolTip("Select player-controlled or beta auto modes")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo)
-        sim_layout.addLayout(mode_row)
-
+        mode_row.addStretch()
+        settings_layout.addLayout(mode_row)
+        
+        # Preferences
+        prefs_row = QHBoxLayout()
+        self.show_math_check = QCheckBox("Show decision notes")
+        self.show_math_check.setToolTip("Include brief decision math/choices in the log")
+        prefs_row.addWidget(self.show_math_check)
+        prefs_row.addStretch()
+        settings_layout.addLayout(prefs_row)
+        
+        settings_group.setLayout(settings_layout)
+        sim_layout.addWidget(settings_group)
+        
+        # Initiative and player actions section
+        combat_group = QGroupBox("Combat State")
+        combat_layout = QVBoxLayout()
+        combat_layout.setSpacing(10)
+        
+        # Initiative
         initiative_row = QHBoxLayout()
         initiative_row.addWidget(QLabel("Initiative Order:"))
         self.initiative_label = QLabel("(run a simulation)")
+        self.initiative_label.setStyleSheet("font-weight: bold;")
         initiative_row.addWidget(self.initiative_label)
         initiative_row.addStretch()
-        sim_layout.addLayout(initiative_row)
-
+        combat_layout.addLayout(initiative_row)
+        
+        # Player actions
         player_action_row = QHBoxLayout()
         player_action_row.addWidget(QLabel("Player actions:"))
         self.player_action1_combo = QComboBox()
         self.player_action2_combo = QComboBox()
         for combo in (self.player_action1_combo, self.player_action2_combo):
             combo.addItems(["Attack", "Evade", "Block", "Skip"])
-            combo.setToolTip("Player-selected action for Character 1 when in player mode")
+            combo.setToolTip("Player-selected action when in player-controlled mode")
         player_action_row.addWidget(self.player_action1_combo)
         player_action_row.addWidget(self.player_action2_combo)
-        sim_layout.addLayout(player_action_row)
+        player_action_row.addStretch()
+        combat_layout.addLayout(player_action_row)
+        
+        # Movement controls
+        move_row = QHBoxLayout()
+        move_row.addWidget(QLabel("Move to:"))
+        move_row.addWidget(QLabel("x:"))
+        self.move_x = QSpinBox()
+        self.move_x.setRange(0, 99)
+        self.move_x.setMaximumWidth(60)
+        move_row.addWidget(self.move_x)
+        move_row.addWidget(QLabel("y:"))
+        self.move_y = QSpinBox()
+        self.move_y.setRange(0, 99)
+        self.move_y.setMaximumWidth(60)
+        move_row.addWidget(self.move_y)
+        self.move_button = QPushButton("Move (Character 1)")
+        self.move_button.setIcon(IconProvider.get_icon("arrow_right"))
+        move_row.addWidget(self.move_button)
+        self.move_button.clicked.connect(self.move_attacker)
+        self.move_button.setToolTip("Move Character 1 to the chosen coordinates")
+        move_row.addStretch()
+        combat_layout.addLayout(move_row)
+        
+        combat_group.setLayout(combat_layout)
+        sim_layout.addWidget(combat_group)
+        
         self._set_player_controls_enabled(False)
         self.replay_snapshots: list[dict] = []
         self.replay_index = 0
@@ -499,20 +575,6 @@ class MainWindow(QWidget):
 
         # initialize control state based on default mode
         self._on_mode_changed()
-
-        # Simple movement controls
-        move_row = QHBoxLayout()
-        move_row.addWidget(QLabel("Move to x:"))
-        self.move_x = QSpinBox(); self.move_x.setRange(0, 99)
-        move_row.addWidget(self.move_x)
-        move_row.addWidget(QLabel("y:"))
-        self.move_y = QSpinBox(); self.move_y.setRange(0, 99)
-        move_row.addWidget(self.move_y)
-        self.move_button = QPushButton("Move (Character 1)")
-        move_row.addWidget(self.move_button)
-        self.move_button.clicked.connect(self.move_attacker)
-        self.move_button.setToolTip("Move Character 1 to the chosen coordinates")
-        sim_layout.addLayout(move_row)
 
         # Spell casting disabled; UI elements removed for now
 
@@ -542,11 +604,12 @@ class MainWindow(QWidget):
         self.map_view.setPlaceholderText("Post-turn maps will appear here.")
         self.map_view.setLineWrapMode(QTextEdit.NoWrap)
         self.map_view.setMinimumHeight(220)
-        self.map_scene = QGraphicsScene()
-        self.map_canvas = QGraphicsView(self.map_scene)
-        self.map_canvas.setFixedHeight(220)
-        self.map_canvas.setMinimumWidth(300)
-        self.map_canvas.setRenderHints(self.map_canvas.renderHints())
+        
+        # Use enhanced tactical map widget instead of basic graphics view
+        self.tactical_map_widget = TacticalMapWidget(10, 10)
+        self.tactical_map_widget.setFixedHeight(220)
+        self.tactical_map_widget.setMinimumWidth(300)
+        
         self.map_grid = QTableWidget(10, 10)
         self.map_grid.setFixedHeight(200)
         self.map_grid.setMinimumWidth(300)
@@ -563,17 +626,24 @@ class MainWindow(QWidget):
         right_col.addWidget(QLabel("Map Log"))
         right_col.addWidget(self.map_view)
         right_col.addWidget(QLabel("Visual Map"))
-        right_col.addWidget(self.map_canvas)
+        right_col.addWidget(self.tactical_map_widget)
         right_col.addWidget(QLabel("Map Grid"))
         right_col.addWidget(self.map_grid)
-        legend = QLabel("Legend: initials = unit, tinted cell = occupied, light cell = empty")
-        legend.setStyleSheet("color: #666;")
+        legend = QLabel("Legend: initials = unit, yellow = active, red = target, light = empty")
+        # Legend will inherit color from theme stylesheet (no hardcoded color)
+        legend.setStyleSheet("font-size: 10pt; padding: 4px;")
         right_col.addWidget(legend)
 
         replay_row = QHBoxLayout()
-        self.replay_prev = QPushButton("◀")
-        self.replay_next = QPushButton("▶")
-        self.replay_play = QPushButton("Play")
+        self.replay_prev = QPushButton()
+        self.replay_prev.setIcon(IconProvider.get_icon("arrow_left"))
+        self.replay_prev.setToolTip("Previous frame")
+        self.replay_next = QPushButton()
+        self.replay_next.setIcon(IconProvider.get_icon("arrow_right"))
+        self.replay_next.setToolTip("Next frame")
+        self.replay_play = QPushButton()
+        self.replay_play.setIcon(IconProvider.get_icon("play"))
+        self.replay_play.setToolTip("Play/Pause replay")
         self.replay_slider = QSlider(Qt.Horizontal)
         self.replay_slider.setMinimum(0)
         self.replay_slider.setMaximum(0)
@@ -770,24 +840,8 @@ class MainWindow(QWidget):
         QMessageBox.information(self, "About AvaSim", "AvaSim Combat Sandbox\nWindows-friendly PySide6 desktop app for Avalore-inspired encounters.")
 
     def _render_action_log(self, lines: list[str]) -> str:
-        def color_for(line: str) -> str:
-            low = line.lower()
-            if "critical" in low or "crit" in low:
-                return "#b22222"
-            if "hit" in low or "damage" in low:
-                return "#d2691e"
-            if "miss" in low or "fail" in low or "graz" in low:
-                return "#555555"
-            if "move" in low or "position" in low:
-                return "#1d6fb6"
-            return "#222222"
-
-        html_lines = []
-        for ln in lines:
-            color = color_for(ln)
-            safe = html.escape(ln)
-            html_lines.append(f"<div style='color:{color}; margin-bottom:2px;'>{safe}</div>")
-        return "".join(html_lines)
+        """Render action log with syntax highlighting."""
+        return TextHighlighter.highlight_html(lines)
 
     def _render_map_grid(self, tactical_map: TacticalMap | None) -> None:
         if tactical_map is None:
@@ -815,43 +869,9 @@ class MainWindow(QWidget):
         self.map_grid.resizeRowsToContents()
 
     def _render_visual_map(self, snapshot: dict | None) -> None:
-        if not snapshot:
-            self.map_scene.clear()
-            return
-        self.map_scene.clear()
-        cell_w = 28
-        cell_h = 24
-        terrain_colors = {
-            "wall": QColor("#444"),
-            "forest": QColor("#2e8b57"),
-            "water": QColor("#3a6ea5"),
-            "mountain": QColor("#7f6f50"),
-            "road": QColor("#c2a16a"),
-            "normal": QColor("#f0ede6"),
-        }
-        highlight_actor = QColor("#ffe8c2")
-        highlight_target = QColor("#ffd1d1")
-        cells = snapshot.get("cells", []) if snapshot else []
-        actor_pos = snapshot.get("actor", {}).get("position") if snapshot else None
-        target_pos = snapshot.get("target", {}).get("position") if snapshot else None
-        for cell in cells:
-            x = cell.get("x", 0)
-            y = cell.get("y", 0)
-            terrain = cell.get("terrain", "normal")
-            occupant = cell.get("occupant")
-            rect_x = x * cell_w
-            rect_y = y * cell_h
-            brush = QBrush(terrain_colors.get(terrain, terrain_colors["normal"]))
-            pen = QPen(QColor("#999"))
-            item = self.map_scene.addRect(rect_x, rect_y, cell_w - 2, cell_h - 2, pen, brush)
-            if actor_pos == (x, y):
-                item.setBrush(QBrush(highlight_actor))
-            if target_pos == (x, y):
-                item.setBrush(QBrush(highlight_target))
-            if occupant:
-                text = self.map_scene.addText(str(occupant)[:2])
-                text.setDefaultTextColor(QColor("#111"))
-                text.setPos(rect_x + 6, rect_y + 4)
+        """Render visual tactical map using enhanced widget."""
+        if hasattr(self, 'tactical_map_widget'):
+            self.tactical_map_widget.draw_snapshot(snapshot)
 
     def _show_howto(self) -> None:
         QMessageBox.information(
@@ -985,7 +1005,9 @@ class MainWindow(QWidget):
         self._set_player_controls_enabled(player_mode)
 
     def _on_theme_changed(self):
-        self._is_dark = self.theme_combo.currentText().lower() == "dark"
+        theme_str = self.theme_combo.currentText().lower()
+        theme = Theme.DARK if theme_str == "dark" else Theme.LIGHT
+        self.theme_manager.set_theme(theme)
         self._apply_theme()
 
     def _on_time_changed(self):
@@ -1008,41 +1030,17 @@ class MainWindow(QWidget):
         return actions
 
     def _apply_theme(self):
-        if self._is_dark:
-            bg = "#1e1b18"
-            panel = "#26221f"
-            text = "#f0ede6"
-            accent = "#d6a756"
-        else:
-            bg = "#f4efe7"
-            panel = "#ffffff"
-            text = "#1f1a17"
-            accent = "#c1842f"
-        style = f"""
-            QWidget {{ background: {bg}; color: {text}; font-family: 'Segoe UI', 'SF Pro Display', 'Helvetica', 'Arial', sans-serif; }}
-            QGroupBox {{ border: 1px solid {accent}; margin-top: 6px; padding: 6px; }}
-            QGroupBox::title {{ subcontrol-origin: margin; left: 6px; padding: 0 4px; color: {accent}; font-weight: 600; }}
-            QPushButton {{ background: {panel}; border: 1px solid {accent}; padding: 6px 10px; border-radius: 4px; color: {text}; }}
-            QPushButton:hover {{ background: {accent}; color: {bg}; }}
-            QLineEdit, QComboBox, QSpinBox, QTextEdit {{ background: {panel}; color: {text}; border: 1px solid {accent}; }}
-            QLabel {{ color: {text}; }}
-            QTabBar::tab {{ color: #000000; font-weight: 600; }}
-            QTabBar::tab:selected {{ color: #000000; }}
-            QTableWidget {{ gridline-color: {accent}; }}
-        """
-        self.setStyleSheet(style)
-        mono_font = QFont("Courier New")
-        mono_font.setStyleHint(QFont.Monospace)
-        mono_font.setFixedPitch(True)
-
-        map_font = QFont(mono_font)
-        map_font.setPointSize(12)
+        """Apply the current theme's stylesheet to the entire window."""
+        stylesheet = self.theme_manager.generate_stylesheet()
+        self.setStyleSheet(stylesheet)
+        
+        # Apply monospace fonts to text displays
+        mono_font = FontConfig.get_font("monospace", 11)
+        map_font = FontConfig.get_font("monospace", 12)
+        
+        self.action_view.setFont(mono_font)
+        self.status_view.setFont(mono_font)
         self.map_view.setFont(map_font)
-
-        log_font = QFont(mono_font)
-        log_font.setPointSize(11)
-        self.action_view.setFont(log_font)
-        self.status_view.setFont(log_font)
 
     def _render_initiative(self, engine: AvaCombatEngine) -> None:
         if not engine.turn_order:

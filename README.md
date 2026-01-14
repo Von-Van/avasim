@@ -164,6 +164,8 @@ python3 pyside_app.py
 
 ### Module Structure
 
+**Combat Module** (`combat/`)
+
 [combat/engine.py](combat/engine.py) - **Core combat engine (1690+ lines)**
 - `CombatEngine`: Main combat orchestrator
 - Turn management and initiative
@@ -208,6 +210,76 @@ python3 pyside_app.py
 [combat/dice.py](combat/dice.py) - **Dice rolling utilities**
 - 2d10 roller with Avalore rules
 - Critical/graze detection
+
+**UI Module** (`ui/`)
+
+[ui/theme.py](ui/theme.py) - **Professional theming system**
+- `Theme` enum (Dark/Light modes)
+- `ThemeManager` - generates 400+ line QSS stylesheets
+- `ColorPalette` - 13-color palettes for consistent design
+- `FontConfig` - standardized typography across app
+- `IconProvider` - Font Awesome icon management (30+ icons)
+
+[ui/animations.py](ui/animations.py) - **Visual effects and feedback**
+- `ProgressIndicator` - smooth animated progress bars
+- `TextHighlighter` - 7-category syntax highlighting for combat logs
+- `StatusBadge` - animated status indicators with pulsing effects
+- `AnimatedButton`, `TabTransitionHelper`, `TooltipEnhancer` - helper components
+
+[ui/components.py](ui/components.py) - **Reusable UI widgets**
+- `LabeledComboBox`, `LabeledSpinBox`, `LabeledLineEdit` - consistent input controls
+- `IconButton` - buttons with Font Awesome icons
+- `SectionGroupBox` - professional grouped control containers
+- `ControlRow` - flexible horizontal control layouts
+
+[ui/map_widget.py](ui/map_widget.py) - **Tactical map visualization**
+- `TacticalMapWidget` - 32×32 cell graphics widget with professional rendering
+- `MapLegend` - interactive map legend with terrain/position indicators
+- Grid-based map display with color-coded terrain
+- Position highlighting system (active/target/occupant)
+
+## UI/UX Features (Desktop Application)
+
+The PySide6-based desktop application provides a professional, polished interface:
+
+### Visual Design
+- **Professional Theme System** - Centralized color management with Dark/Light theme toggle
+- **Font Awesome Icons** - 30+ consistent icons throughout the application for visual clarity
+- **Improved QSS Styling** - Modern stylesheet with proper contrast, rounded corners, and hover effects
+- **Better Visual Hierarchy** - Organized control groups with GroupBox sections for improved scannability
+- **Theme-aware Components** - Tab bars, buttons, and menus now properly respect the current theme
+
+### Layout Improvements
+- **Organized Control Sections** - Simulation settings grouped into logical "Simulation Settings" and "Combat State" sections
+- **Better Spacing** - Increased padding and margins for improved readability
+- **Responsive Widgets** - Combo boxes and controls properly sized with maximum widths to prevent cramping
+- **Scroll Areas** - Character editor and simulation tab wrapped in scroll areas for small screens
+
+### Interactive Enhancements
+- **Better Button Styling** - Clear hover states with visual feedback (color changes, border highlights)
+- **Improved Checkboxes** - Custom styled with better visibility and hover effects
+- **Professional Sliders** - Custom-styled replay slider with accent color
+- **Keyboard Navigation** - Full tab support and shortcut indicators
+
+### User Experience
+- **Quick Start Features** - "Start", "Quick Start Duel", and "Reload last setup" buttons for fast access
+- **Contextual Tooltips** - Helpful tooltips on controls explaining their function
+- **Persistent Settings** - Theme, layout, and character templates saved between sessions
+- **Clean Logs** - Color-coded action logs (red for critical hits, orange for hits, gray for misses, blue for movement)
+
+### Professional Code Organization
+All UI code is now organized in the clean `/ui/` module structure:
+- **ui/theme.py** - Centralized theme and styling system
+- **ui/animations.py** - Animations, effects, and progress indicators
+- **ui/components.py** - Reusable widgets and controls
+- **ui/map_widget.py** - Professional tactical map visualization
+- **ui/__init__.py** - Single import point for all UI components
+
+This organization provides:
+- ✅ Clean separation of concerns
+- ✅ Easy code navigation and maintenance
+- ✅ Reusable components for future projects
+- ✅ Professional import patterns (`from ui import ...`)
 
 ## Testing
 
@@ -261,6 +333,11 @@ Test coverage includes:
 | [combat/map.py](combat/map.py) | Tactical grid system |
 | [combat/dice.py](combat/dice.py) | Dice rolling and probability |
 | [combat/enums.py](combat/enums.py) | Game constants and types |
+| [ui/theme.py](ui/theme.py) | Theme management and styling |
+| [ui/animations.py](ui/animations.py) | Visual effects and animations |
+| [ui/components.py](ui/components.py) | Reusable UI widgets |
+| [ui/map_widget.py](ui/map_widget.py) | Tactical map visualization |
+| [ui/__init__.py](ui/__init__.py) | UI module exports |
 | [pyside_app.py](pyside_app.py) | Desktop GUI (PySide6) |
 | [test_combat.py](test_combat.py) | Unit tests (18 tests) |
 | [DESIGN.md](DESIGN.md) | Architecture documentation |
