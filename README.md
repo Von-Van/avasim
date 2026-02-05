@@ -12,10 +12,10 @@ python3 pyside_app.py
 
 ### Running Tests
 ```bash
-python3 -m unittest test_combat -v
+python3 -m unittest -v
 ```
 
-All 18 tests pass, covering weapons, armor, feats, action economy, and combat mechanics.
+Tests cover weapons, armor, feats, action economy, combat mechanics, and the tactical map.
 
 ## Features
 
@@ -87,7 +87,7 @@ All weapons match official Avalore rules with fixed damage, accuracy, and action
 6. If HP drops to 0, trigger death save (once per scene)
 
 **Key Mechanics:**
-- **Initiative**: 2d10 + DEX:Acrobatics modifier
+- **Initiative**: 2d10 + DEX modifier
 - **Evasion DC**: Contested 2d10 + DEX:Acrobatics vs attack roll
 - **Block**: Active defense, 2d10 + shield mod vs DC 12 (mutual exclusive with evade)
 - **Dash**: 1 action, +4 blocks movement (total 9 with no penalties vs 5 base)
@@ -213,6 +213,8 @@ python3 pyside_app.py
 
 **UI Module** (`ui/`)
 
+Some UI components are available for reuse but are not yet wired into the main window.
+
 [ui/theme.py](ui/theme.py) - **Professional theming system**
 - `Theme` enum (Dark/Light modes)
 - `ThemeManager` - generates 400+ line QSS stylesheets
@@ -221,9 +223,9 @@ python3 pyside_app.py
 - `IconProvider` - Font Awesome icon management (30+ icons)
 
 [ui/animations.py](ui/animations.py) - **Visual effects and feedback**
-- `ProgressIndicator` - smooth animated progress bars
+- `ProgressIndicator` - smooth animated progress bars (available component)
 - `TextHighlighter` - 7-category syntax highlighting for combat logs
-- `StatusBadge` - animated status indicators with pulsing effects
+- `StatusBadge` - animated status indicators with pulsing effects (available component)
 - `AnimatedButton`, `TabTransitionHelper`, `TooltipEnhancer` - helper components
 
 [ui/components.py](ui/components.py) - **Reusable UI widgets**
@@ -234,7 +236,7 @@ python3 pyside_app.py
 
 [ui/map_widget.py](ui/map_widget.py) - **Tactical map visualization**
 - `TacticalMapWidget` - 32×32 cell graphics widget with professional rendering
-- `MapLegend` - interactive map legend with terrain/position indicators
+- `MapLegend` - interactive map legend with terrain/position indicators (available component)
 - Grid-based map display with color-coded terrain
 - Position highlighting system (active/target/occupant)
 
@@ -266,6 +268,7 @@ The PySide6-based desktop application provides a professional, polished interfac
 - **Contextual Tooltips** - Helpful tooltips on controls explaining their function
 - **Persistent Settings** - Theme, layout, and character templates saved between sessions
 - **Clean Logs** - Color-coded action logs (red for critical hits, orange for hits, gray for misses, blue for movement)
+- **Spellcasting UI** - Engine supports spells, but the current GUI keeps spellcasting disabled
 
 ### Professional Code Organization
 All UI code is now organized in the clean `/ui/` module structure:
@@ -283,36 +286,18 @@ This organization provides:
 
 ## Testing
 
-All 18 tests pass:
+Run the test suite:
 ```
-test_combat_participant.py:
-  ✓ test_consume_action_standard
-  ✓ test_consume_action_limited
-  ✓ test_consume_action_insufficient
-  ✓ test_death_save_triggered
-  ✓ test_block_evade_exclusivity
-  ✓ test_weapon_requirement_penalty
-  ✓ test_can_use_weapon_checks
-
-test_combat_mechanics.py:
-  ✓ test_harmonized_arsenal_throw
-  ✓ test_attack_graze_mechanics
-  ✓ test_armor_soak_reduction
-  ✓ test_critical_hit_ap
-  ✓ test_feat_momentum_strike
-  ✓ test_feat_dual_striker
-  ✓ test_feat_armor_piercer
-  ✓ test_feat_bastion_stance
-  ✓ test_feat_galestorm
-  ✓ test_feat_dual_wielder
-  ✓ test_combat_engine_initialization
-
-Ran 18 tests in 0.003s - OK
+python3 -m unittest -v
 ```
 
-Test coverage includes:
+Test files:
+- `test_combat.py`
+- `test_tactical_map.py`
+
+Coverage includes:
 - Action economy enforcement (action consumption)
-- Weapon system (all 21 types, requirements, penalties)
+- Weapon system (21 types, requirements, penalties)
 - Armor system (soak, penalties, prohibitions)
 - Shield mechanics (blocking)
 - Feat mechanics (30+ feats with limits)
@@ -320,6 +305,7 @@ Test coverage includes:
 - Death saves
 - Dual wielding and two-handed weapons
 - Combat resolution flow
+- Tactical map distance and reach logic
 
 ## File Guide
 
@@ -339,8 +325,8 @@ Test coverage includes:
 | [ui/map_widget.py](ui/map_widget.py) | Tactical map visualization |
 | [ui/__init__.py](ui/__init__.py) | UI module exports |
 | [pyside_app.py](pyside_app.py) | Desktop GUI (PySide6) |
-| [test_combat.py](test_combat.py) | Unit tests (18 tests) |
-| [DESIGN.md](DESIGN.md) | Architecture documentation |
+| [test_combat.py](test_combat.py) | Unit tests |
+| [test_tactical_map.py](test_tactical_map.py) | Tactical map tests |
 
 ## Avalore Rules Implementation Status
 
@@ -361,7 +347,7 @@ Test coverage includes:
 | Once-per-turn limits | ✓ Complete | Limited actions tracked per turn |
 | Once-per-scene limits | ✓ Complete | Death saves, lift/load once per scene |
 | Spellcasting | ✓ Complete | Anima costs, miscast, overcasting |
-| Initiative system | ✓ Complete | 2d10 + DEX:Acrobatics |
+| Initiative system | ✓ Complete | 2d10 + DEX |
 | Tactical map | ✓ Complete | Grid-based positioning and reach |
 | Heavy armor restrictions | ✓ Complete | No ranged weapons with heavy armor |
 | Weapon requirements | ✓ Complete | -2 accuracy penalty if unmet |
@@ -371,41 +357,56 @@ Test coverage includes:
 ## Combat Example
 
 ```python
-from combat.engine import CombatEngine
-from combat.participant import Participant
+from avasim import Character
+from combat.engine import AvaCombatEngine
+from combat.participant import CombatParticipant
 from combat.items import AVALORE_WEAPONS, AVALORE_ARMOR, AVALORE_SHIELDS
+from combat.map import TacticalMap
 
-# Create combatants
-warrior = Participant(
-    name="Warrior",
-    weapon=AVALORE_WEAPONS["Greatsword"],
+# Create character sheets
+warrior_char = Character("Warrior")
+warrior_char.base_stats["Strength"] = 2
+
+mage_char = Character("Mage")
+mage_char.base_stats["Harmony"] = 2
+
+# Build combat participants
+warrior = CombatParticipant(
+    character=warrior_char,
+    current_hp=warrior_char.get_max_hp(),
+    max_hp=warrior_char.get_max_hp(),
+    weapon_main=AVALORE_WEAPONS["Greatsword"],
     armor=AVALORE_ARMOR["Heavy Armor"],
     shield=AVALORE_SHIELDS["Large Shield"],
-    stats={"dex": 1, "int": -1, "har": 0, "str": 2}
 )
 
-mage = Participant(
-    name="Mage",
-    weapon=AVALORE_WEAPONS["Arcane Wand"],
+mage = CombatParticipant(
+    character=mage_char,
+    current_hp=mage_char.get_max_hp(),
+    max_hp=mage_char.get_max_hp(),
+    weapon_main=AVALORE_WEAPONS["Arcane Wand"],
     armor=AVALORE_ARMOR["Light Armor"],
-    stats={"dex": 0, "int": 1, "har": 2, "str": -2}
 )
+
+# Optional: tactical map
+tactical_map = TacticalMap(10, 10)
+warrior.position = (0, 0)
+mage.position = (3, 0)
+tactical_map.set_occupant(*warrior.position, warrior)
+tactical_map.set_occupant(*mage.position, mage)
 
 # Initialize and run combat
-engine = CombatEngine([warrior, mage])
+engine = AvaCombatEngine([warrior, mage], tactical_map=tactical_map)
 engine.roll_initiative()
 
 while not engine.is_combat_ended():
     current = engine.get_current_participant()
-    targets = [p for p in engine.participants if p != current and p.current_hp > 0]
-    
+    targets = [p for p in engine.participants if p is not current and p.current_hp > 0]
     if targets:
-        target = targets[0]
-        engine.perform_attack(current, target)
-    
+        engine.perform_attack(current, targets[0])
     engine.advance_turn()
 
-print(engine.get_combat_log())
+print("\n".join(engine.combat_log))
 ```
 
 ## License

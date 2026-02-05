@@ -5,6 +5,8 @@ from collections import deque
 from typing import Dict
 import json
 import html
+import csv
+import csv
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -16,6 +18,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QFileDialog,
+    QDialog,
+    QDialogButtonBox,
     QMessageBox,
     QTabWidget,
     QPushButton,
@@ -27,13 +31,14 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QCheckBox,
+    QProgressBar,
     QGraphicsScene,
     QGraphicsView,
     QSlider,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QAction, QColor, QBrush, QPen
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QFont, QAction, QColor, QBrush, QPen, QDesktopServices
 
 from avasim import Character, STATS
 from combat import (
@@ -44,7 +49,7 @@ from combat import (
     CombatParticipant,
     TacticalMap,
 )
-from combat.enums import RangeCategory, StatusEffect
+from combat.enums import RangeCategory, StatusEffect, TerrainType
 from ui import (
     Theme,
     ThemeManager,
@@ -304,6 +309,186 @@ class CombatantEditor(QGroupBox):
         self._apply_hand_disable(self.hand2_choice, disable_hand2)
 
 
+class ScenarioEditorDialog(QDialog):
+    def __init__(self, scenario: dict, attacker_name: str, defender_name: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Scenario Builder")
+        self.setModal(True)
+        self.resize(720, 640)
+
+        self.attacker_name = attacker_name or "Attacker"
+        self.defender_name = defender_name or "Defender"
+
+        self.width = int(scenario.get("width", 10))
+        self.height = int(scenario.get("height", 10))
+        self.attacker_pos = tuple(scenario.get("attacker_pos", (0, 0)))
+        self.defender_pos = tuple(scenario.get("defender_pos", (3, 0)))
+        self.terrain: dict[tuple[int, int], str] = {
+            (int(cell["x"]), int(cell["y"])): str(cell["terrain"])
+            for cell in scenario.get("terrain", [])
+        }
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        self.setLayout(layout)
+
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Width:"))
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(4, 40)
+        self.width_spin.setValue(self.width)
+        size_row.addWidget(self.width_spin)
+        size_row.addSpacing(12)
+        size_row.addWidget(QLabel("Height:"))
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(4, 40)
+        self.height_spin.setValue(self.height)
+        size_row.addWidget(self.height_spin)
+        self.resize_btn = QPushButton("Resize")
+        self.resize_btn.clicked.connect(self._apply_resize)
+        size_row.addWidget(self.resize_btn)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        tools_row = QHBoxLayout()
+        tools_row.addWidget(QLabel("Edit mode:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Terrain", "Place Attacker", "Place Defender", "Erase"])
+        tools_row.addWidget(self.mode_combo)
+        tools_row.addSpacing(12)
+        tools_row.addWidget(QLabel("Terrain:"))
+        self.terrain_combo = QComboBox()
+        self.terrain_combo.addItems(["normal", "forest", "water", "mountain", "road", "wall"])
+        tools_row.addWidget(self.terrain_combo)
+        self.fill_btn = QPushButton("Fill")
+        self.fill_btn.clicked.connect(self._fill_terrain)
+        tools_row.addWidget(self.fill_btn)
+        self.clear_btn = QPushButton("Clear Terrain")
+        self.clear_btn.clicked.connect(self._clear_terrain)
+        tools_row.addWidget(self.clear_btn)
+        tools_row.addStretch()
+        layout.addLayout(tools_row)
+
+        self.map_widget = TacticalMapWidget(self.width, self.height)
+        self.map_widget.setMinimumHeight(380)
+        self.map_widget.set_interaction_handlers(on_click=self._on_cell_clicked)
+        layout.addWidget(self.map_widget)
+
+        help_label = QLabel("Click tiles to paint terrain or place combatants. Use Fill to apply terrain across the grid.")
+        help_label.setStyleSheet("color: #777;")
+        layout.addWidget(help_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._ensure_distinct_positions()
+        self._refresh_map()
+
+    def _apply_resize(self) -> None:
+        self.width = int(self.width_spin.value())
+        self.height = int(self.height_spin.value())
+        self.terrain = {(x, y): t for (x, y), t in self.terrain.items() if x < self.width and y < self.height}
+        self.attacker_pos = (min(self.attacker_pos[0], self.width - 1), min(self.attacker_pos[1], self.height - 1))
+        self.defender_pos = (min(self.defender_pos[0], self.width - 1), min(self.defender_pos[1], self.height - 1))
+        self._ensure_distinct_positions()
+        self.map_widget.set_grid_dimensions(self.width, self.height)
+        self._refresh_map()
+
+    def _ensure_distinct_positions(self) -> None:
+        if self.attacker_pos != self.defender_pos:
+            return
+        ax, ay = self.attacker_pos
+        candidates = [
+            (min(self.width - 1, ax + 1), ay),
+            (max(0, ax - 1), ay),
+            (ax, min(self.height - 1, ay + 1)),
+            (ax, max(0, ay - 1)),
+        ]
+        for pos in candidates:
+            if pos != self.attacker_pos:
+                self.defender_pos = pos
+                return
+
+    def _fill_terrain(self) -> None:
+        terrain = self.terrain_combo.currentText()
+        if terrain == "normal":
+            self.terrain.clear()
+        else:
+            self.terrain = {(x, y): terrain for x in range(self.width) for y in range(self.height)}
+        self._refresh_map()
+
+    def _clear_terrain(self) -> None:
+        self.terrain.clear()
+        self._refresh_map()
+
+    def _on_cell_clicked(self, x: int, y: int) -> None:
+        mode = self.mode_combo.currentText()
+        if mode == "Place Attacker":
+            prev = self.attacker_pos
+            self.attacker_pos = (x, y)
+            if self.attacker_pos == self.defender_pos:
+                self.defender_pos = prev
+        elif mode == "Place Defender":
+            prev = self.defender_pos
+            self.defender_pos = (x, y)
+            if self.defender_pos == self.attacker_pos:
+                self.attacker_pos = prev
+        else:
+            if mode == "Erase":
+                terrain = "normal"
+            else:
+                terrain = self.terrain_combo.currentText()
+            if terrain == "normal":
+                self.terrain.pop((x, y), None)
+            else:
+                self.terrain[(x, y)] = terrain
+        self._ensure_distinct_positions()
+        self._refresh_map()
+
+    def _build_snapshot(self) -> dict:
+        cells = []
+        for y in range(self.height):
+            for x in range(self.width):
+                terrain = self.terrain.get((x, y), "normal")
+                occupant = None
+                if (x, y) == self.attacker_pos:
+                    occupant = self.attacker_name
+                elif (x, y) == self.defender_pos:
+                    occupant = self.defender_name
+                cells.append({
+                    "x": x,
+                    "y": y,
+                    "terrain": terrain,
+                    "occupant": occupant,
+                })
+        return {
+            "label": "Scenario",
+            "width": self.width,
+            "height": self.height,
+            "cells": cells,
+            "actor": {"position": self.attacker_pos},
+            "target": {"position": self.defender_pos},
+        }
+
+    def _refresh_map(self) -> None:
+        self.map_widget.draw_snapshot(self._build_snapshot())
+
+    def get_scenario(self) -> dict:
+        return {
+            "width": self.width,
+            "height": self.height,
+            "attacker_pos": [int(self.attacker_pos[0]), int(self.attacker_pos[1])],
+            "defender_pos": [int(self.defender_pos[0]), int(self.defender_pos[1])],
+            "terrain": [
+                {"x": int(x), "y": int(y), "terrain": terrain}
+                for (x, y), terrain in sorted(self.terrain.items())
+            ],
+        }
+
+
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -354,6 +539,19 @@ class MainWindow(QWidget):
             "time": "Day",
             "show_math": False,
         }
+        self._hover_cell = None
+        self.decision_log: list[str] = []
+        self._last_action_lines: list[str] = []
+        self._move_path_preview: list[tuple[int, int]] = []
+        self.scenario_width = 10
+        self.scenario_height = 10
+        self.scenario_cells: dict[tuple[int, int], str] = {}
+        self.scenario_attacker_pos = (0, 0)
+        self.scenario_defender_pos = (3, 0)
+        self._scenario_presets = self._build_scenario_presets()
+        self._move_path_preview: list[tuple[int, int]] = []
+        self._last_engine: AvaCombatEngine | None = None
+        self.decision_log: list[str] = []
 
         root_layout = QVBoxLayout()
         self.setLayout(root_layout)
@@ -362,6 +560,13 @@ class MainWindow(QWidget):
         self.menu_bar = QMenuBar()
         root_layout.addWidget(self.menu_bar)
         self._build_menus()
+
+        self.toast_label = QLabel("")
+        self.toast_label.setVisible(False)
+        self.toast_label.setStyleSheet(
+            "background:#222;color:#fff;padding:6px 12px;border-radius:6px;font-size:10pt;"
+        )
+        root_layout.addWidget(self.toast_label)
 
         # Tabs: Character Editor and Simulation
         self.tabs = QTabWidget()
@@ -406,6 +611,15 @@ class MainWindow(QWidget):
         editors_layout.addWidget(self.attacker_editor)
         editors_layout.addWidget(self.defender_editor)
         char_layout.addLayout(editors_layout)
+        self.attacker_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
+        self.defender_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
+        for combo in (
+            self.attacker_editor.hand1_choice,
+            self.attacker_editor.hand2_choice,
+            self.defender_editor.hand1_choice,
+            self.defender_editor.hand2_choice,
+        ):
+            combo.currentTextChanged.connect(self._update_action_availability)
 
         template_row = QHBoxLayout()
         self.save_c1_btn = QPushButton("Save Character 1")
@@ -511,9 +725,104 @@ class MainWindow(QWidget):
         prefs_row.addWidget(self.show_math_check)
         prefs_row.addStretch()
         settings_layout.addLayout(prefs_row)
-        
+
         settings_group.setLayout(settings_layout)
         sim_layout.addWidget(settings_group)
+
+        # Scenario builder
+        scenario_group = QGroupBox("Scenario Builder")
+        scenario_layout = QVBoxLayout()
+        scenario_layout.setSpacing(8)
+
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Map size:"))
+        self.map_width_spin = QSpinBox()
+        self.map_width_spin.setRange(4, 40)
+        self.map_width_spin.setValue(self.scenario_width)
+        self.map_width_spin.setMaximumWidth(70)
+        size_row.addWidget(QLabel("W"))
+        size_row.addWidget(self.map_width_spin)
+        self.map_height_spin = QSpinBox()
+        self.map_height_spin.setRange(4, 40)
+        self.map_height_spin.setValue(self.scenario_height)
+        self.map_height_spin.setMaximumWidth(70)
+        size_row.addWidget(QLabel("H"))
+        size_row.addWidget(self.map_height_spin)
+        self.resize_map_button = QPushButton("Resize Map")
+        self.resize_map_button.setIcon(IconProvider.get_icon("refresh"))
+        self.resize_map_button.clicked.connect(self._resize_scenario_map)
+        size_row.addWidget(self.resize_map_button)
+        size_row.addStretch()
+        scenario_layout.addLayout(size_row)
+
+        tool_row = QHBoxLayout()
+        tool_row.addWidget(QLabel("Tool:"))
+        self.map_tool_combo = QComboBox()
+        self.map_tool_combo.addItems(["Paint Terrain", "Erase Terrain", "Place Character 1", "Place Character 2"])
+        self.map_tool_combo.setMinimumWidth(180)
+        tool_row.addWidget(self.map_tool_combo)
+        tool_row.addWidget(QLabel("Terrain:"))
+        self.terrain_combo = QComboBox()
+        self.terrain_combo.addItems(["Normal", "Forest", "Water", "Mountain", "Road", "Wall"])
+        self.terrain_combo.setMinimumWidth(140)
+        tool_row.addWidget(self.terrain_combo)
+        self.clear_terrain_button = QPushButton("Clear Terrain")
+        self.clear_terrain_button.setIcon(IconProvider.get_icon("delete"))
+        self.clear_terrain_button.clicked.connect(self._clear_scenario_terrain)
+        tool_row.addWidget(self.clear_terrain_button)
+        tool_row.addStretch()
+        scenario_layout.addLayout(tool_row)
+
+        overlay_row = QHBoxLayout()
+        overlay_row.addWidget(QLabel("Overlays:"))
+        self.overlay_source_combo = QComboBox()
+        self.overlay_source_combo.addItems(["None", "Character 1", "Character 2"])
+        self.overlay_source_combo.setMinimumWidth(140)
+        self.overlay_source_combo.setCurrentText("Character 1")
+        self.overlay_source_combo.currentIndexChanged.connect(self._refresh_scenario_preview)
+        overlay_row.addWidget(self.overlay_source_combo)
+        self.overlay_range_check = QCheckBox("Range")
+        self.overlay_range_check.setChecked(True)
+        self.overlay_los_check = QCheckBox("LOS")
+        self.overlay_path_check = QCheckBox("Path Preview")
+        self.overlay_path_check.setChecked(True)
+        for chk in (self.overlay_range_check, self.overlay_los_check, self.overlay_path_check):
+            chk.stateChanged.connect(self._refresh_scenario_preview)
+            overlay_row.addWidget(chk)
+        overlay_row.addStretch()
+        scenario_layout.addLayout(overlay_row)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Presets:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(["Custom", "Duel", "Skirmish", "Siege"])
+        self.preset_combo.setMinimumWidth(140)
+        preset_row.addWidget(self.preset_combo)
+        self.load_preset_button = QPushButton("Load Preset")
+        self.load_preset_button.setIcon(IconProvider.get_icon("load"))
+        self.load_preset_button.clicked.connect(self._load_preset)
+        preset_row.addWidget(self.load_preset_button)
+        preset_row.addStretch()
+        scenario_layout.addLayout(preset_row)
+
+        scenario_io_row = QHBoxLayout()
+        self.open_scenario_editor_button = QPushButton("Open Editor")
+        self.open_scenario_editor_button.setIcon(IconProvider.get_icon("edit"))
+        self.open_scenario_editor_button.clicked.connect(self._open_scenario_editor)
+        scenario_io_row.addWidget(self.open_scenario_editor_button)
+        self.save_scenario_button = QPushButton("Save Scenario")
+        self.save_scenario_button.setIcon(IconProvider.get_icon("save"))
+        self.save_scenario_button.clicked.connect(self._save_scenario)
+        self.load_scenario_button = QPushButton("Load Scenario")
+        self.load_scenario_button.setIcon(IconProvider.get_icon("load"))
+        self.load_scenario_button.clicked.connect(self._load_scenario)
+        scenario_io_row.addWidget(self.save_scenario_button)
+        scenario_io_row.addWidget(self.load_scenario_button)
+        scenario_io_row.addStretch()
+        scenario_layout.addLayout(scenario_io_row)
+
+        scenario_group.setLayout(scenario_layout)
+        sim_layout.addWidget(scenario_group)
         
         # Initiative and player actions section
         combat_group = QGroupBox("Combat State")
@@ -549,11 +858,13 @@ class MainWindow(QWidget):
         self.move_x = QSpinBox()
         self.move_x.setRange(0, 99)
         self.move_x.setMaximumWidth(60)
+        self.move_x.valueChanged.connect(self._update_move_preview)
         move_row.addWidget(self.move_x)
         move_row.addWidget(QLabel("y:"))
         self.move_y = QSpinBox()
         self.move_y.setRange(0, 99)
         self.move_y.setMaximumWidth(60)
+        self.move_y.valueChanged.connect(self._update_move_preview)
         move_row.addWidget(self.move_y)
         self.move_button = QPushButton("Move (Character 1)")
         self.move_button.setIcon(IconProvider.get_icon("arrow_right"))
@@ -587,8 +898,29 @@ class MainWindow(QWidget):
         self.action_view.setPlaceholderText("Turn-by-turn actions will appear here.")
         self.action_view.setLineWrapMode(QTextEdit.NoWrap)
         self.action_view.setMinimumHeight(240)
+        self.collapse_log_check = QCheckBox("Collapse log runs")
+        self.collapse_log_check.setToolTip("Combine repeated log lines into a single entry")
+        self.collapse_log_check.stateChanged.connect(self._rerender_action_log)
         left_col.addWidget(QLabel("Action Log"))
+        left_col.addWidget(self.collapse_log_check)
         left_col.addWidget(self.action_view)
+
+        self.decision_toggle = QCheckBox("Show decision drawer")
+        self.decision_toggle.setChecked(False)
+        self.decision_toggle.stateChanged.connect(self._toggle_decision_drawer)
+        left_col.addWidget(self.decision_toggle)
+
+        self.decision_group = QGroupBox("Decision Math")
+        decision_layout = QVBoxLayout()
+        self.decision_view = QTextEdit()
+        self.decision_view.setReadOnly(True)
+        self.decision_view.setPlaceholderText("Decision math and AI reasoning will appear here.")
+        self.decision_view.setLineWrapMode(QTextEdit.NoWrap)
+        self.decision_view.setMinimumHeight(140)
+        decision_layout.addWidget(self.decision_view)
+        self.decision_group.setLayout(decision_layout)
+        self.decision_group.setVisible(False)
+        left_col.addWidget(self.decision_group)
 
         self.status_view = QTextEdit()
         self.status_view.setReadOnly(True)
@@ -598,6 +930,33 @@ class MainWindow(QWidget):
         self.status_view.setMinimumHeight(70)
         left_col.addWidget(QLabel("Statuses"))
         left_col.addWidget(self.status_view)
+
+        bars_group = QGroupBox("HP / Armor")
+        bars_layout = QGridLayout()
+        self.attacker_hp_bar = QProgressBar()
+        self.attacker_hp_bar.setRange(0, 100)
+        self.attacker_hp_bar.setValue(0)
+        self.attacker_hp_bar.setFormat("Character 1 HP: %v/%m")
+        self.attacker_armor_bar = QProgressBar()
+        self.attacker_armor_bar.setRange(0, 3)
+        self.attacker_armor_bar.setValue(0)
+        self.attacker_armor_bar.setFormat("Character 1 Armor: %v/3")
+
+        self.defender_hp_bar = QProgressBar()
+        self.defender_hp_bar.setRange(0, 100)
+        self.defender_hp_bar.setValue(0)
+        self.defender_hp_bar.setFormat("Character 2 HP: %v/%m")
+        self.defender_armor_bar = QProgressBar()
+        self.defender_armor_bar.setRange(0, 3)
+        self.defender_armor_bar.setValue(0)
+        self.defender_armor_bar.setFormat("Character 2 Armor: %v/3")
+
+        bars_layout.addWidget(self.attacker_hp_bar, 0, 0)
+        bars_layout.addWidget(self.attacker_armor_bar, 1, 0)
+        bars_layout.addWidget(self.defender_hp_bar, 2, 0)
+        bars_layout.addWidget(self.defender_armor_bar, 3, 0)
+        bars_group.setLayout(bars_layout)
+        left_col.addWidget(bars_group)
 
         self.map_view = QTextEdit()
         self.map_view.setReadOnly(True)
@@ -609,6 +968,10 @@ class MainWindow(QWidget):
         self.tactical_map_widget = TacticalMapWidget(10, 10)
         self.tactical_map_widget.setFixedHeight(220)
         self.tactical_map_widget.setMinimumWidth(300)
+        self.tactical_map_widget.set_interaction_handlers(
+            on_click=self._on_scenario_cell_clicked,
+            on_hover=self._on_scenario_cell_hover,
+        )
         
         self.map_grid = QTableWidget(10, 10)
         self.map_grid.setFixedHeight(200)
@@ -629,7 +992,7 @@ class MainWindow(QWidget):
         right_col.addWidget(self.tactical_map_widget)
         right_col.addWidget(QLabel("Map Grid"))
         right_col.addWidget(self.map_grid)
-        legend = QLabel("Legend: initials = unit, yellow = active, red = target, light = empty")
+        legend = QLabel("Legend: initials = unit, green = active, red = target, overlays = range/LOS, arrows = path")
         # Legend will inherit color from theme stylesheet (no hardcoded color)
         legend.setStyleSheet("font-size: 10pt; padding: 4px;")
         right_col.addWidget(legend)
@@ -672,6 +1035,8 @@ class MainWindow(QWidget):
 
         self._load_settings()
         self._apply_theme()
+        self._update_move_limits()
+        self._refresh_scenario_preview()
         if not getattr(self, "_first_launch_shown", False) and not getattr(self, "_settings_loaded", False):
             self._first_launch_shown = True
             self._show_howto()
@@ -717,10 +1082,26 @@ class MainWindow(QWidget):
         shortcuts_action.triggered.connect(self._show_shortcuts)
         help_menu.addAction(shortcuts_action)
 
-        export_logs = QAction("Export Logs...", self)
+        updates_action = QAction("Check for Updates", self)
+        updates_action.triggered.connect(self._check_for_updates)
+        help_menu.addAction(updates_action)
+
+        updates_action = QAction("Check for Updates", self)
+        updates_action.triggered.connect(self._check_for_updates)
+        help_menu.addAction(updates_action)
+
+        export_logs = QAction("Export Logs (Text)...", self)
         export_logs.setShortcut("Ctrl+E")
         export_logs.triggered.connect(self._export_logs)
         file_menu.addAction(export_logs)
+
+        export_html = QAction("Export Logs (HTML)...", self)
+        export_html.triggered.connect(self._export_logs_html)
+        file_menu.addAction(export_html)
+
+        export_csv = QAction("Export Logs (CSV)...", self)
+        export_csv.triggered.connect(self._export_logs_csv)
+        file_menu.addAction(export_csv)
 
     def _toggle_theme(self) -> None:
         next_theme = "Light" if self.theme_combo.currentText() == "Dark" else "Dark"
@@ -736,6 +1117,11 @@ class MainWindow(QWidget):
         self.time_combo.setCurrentText("Day")
         self.mode_combo.setCurrentText("Full Auto (both AI)")
         self.show_math_check.setChecked(False)
+        preset = self._scenario_presets.get("Duel")
+        if preset:
+            self._apply_scenario_dict(preset)
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.setCurrentText("Duel")
         self._on_mode_changed()
         self._apply_theme()
         self._save_settings()
@@ -748,6 +1134,11 @@ class MainWindow(QWidget):
         self._set_combo_text(self.time_combo, data.get("time", "Day"))
         self._set_combo_text(self.mode_combo, data.get("mode", "Full Auto (both AI)"))
         self.show_math_check.setChecked(data.get("show_math", False))
+        preset = self._scenario_presets.get("Duel")
+        if preset:
+            self._apply_scenario_dict(preset)
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.setCurrentText("Duel")
         self._on_mode_changed()
         self.tabs.setCurrentWidget(self.simulation_tab_scroll)
         self._apply_theme()
@@ -767,6 +1158,7 @@ class MainWindow(QWidget):
             "char1": self.attacker_editor.to_template(),
             "char2": self.defender_editor.to_template(),
             "show_math": self.show_math_check.isChecked(),
+            "scenario": self._serialize_scenario(),
         }
 
     def _apply_setup_data(self, data: dict) -> None:
@@ -779,10 +1171,462 @@ class MainWindow(QWidget):
         self._set_combo_text(self.mode_combo, data.get("mode", self.mode_combo.currentText()))
         self._set_combo_text(self.surprise_combo, data.get("surprise", self.surprise_combo.currentText()))
         self.show_math_check.setChecked(bool(data.get("show_math", False)))
+        if "scenario" in data:
+            self._apply_scenario_dict(data.get("scenario", {}), update_preview=False)
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.setCurrentText("Custom")
         self._on_theme_changed()
         self._on_time_changed()
         self._on_surprise_changed()
         self._on_mode_changed()
+        self._refresh_scenario_preview()
+
+    def _build_scenario_presets(self) -> dict[str, dict]:
+        duel = {
+            "width": 10,
+            "height": 10,
+            "attacker_pos": [0, 0],
+            "defender_pos": [3, 0],
+            "terrain": [],
+        }
+
+        skirmish_terrain = [{"x": x, "y": 5, "terrain": "road"} for x in range(2, 10)]
+        skirmish_terrain += [
+            {"x": 2, "y": 2, "terrain": "forest"},
+            {"x": 3, "y": 2, "terrain": "forest"},
+            {"x": 2, "y": 3, "terrain": "forest"},
+            {"x": 8, "y": 8, "terrain": "forest"},
+            {"x": 9, "y": 8, "terrain": "forest"},
+            {"x": 8, "y": 9, "terrain": "forest"},
+        ]
+        skirmish = {
+            "width": 12,
+            "height": 12,
+            "attacker_pos": [1, 1],
+            "defender_pos": [10, 10],
+            "terrain": skirmish_terrain,
+        }
+
+        siege_terrain = []
+        for y in range(10):
+            if y == 5:
+                continue
+            siege_terrain.append({"x": 7, "y": y, "terrain": "wall"})
+        siege_terrain += [{"x": x, "y": 5, "terrain": "road"} for x in range(14)]
+        siege = {
+            "width": 14,
+            "height": 10,
+            "attacker_pos": [2, 5],
+            "defender_pos": [11, 5],
+            "terrain": siege_terrain,
+        }
+        return {"Duel": duel, "Skirmish": skirmish, "Siege": siege}
+
+    def _serialize_scenario(self) -> dict:
+        return {
+            "width": int(self.scenario_width),
+            "height": int(self.scenario_height),
+            "attacker_pos": [int(self.scenario_attacker_pos[0]), int(self.scenario_attacker_pos[1])],
+            "defender_pos": [int(self.scenario_defender_pos[0]), int(self.scenario_defender_pos[1])],
+            "terrain": [
+                {"x": int(x), "y": int(y), "terrain": terrain}
+                for (x, y), terrain in sorted(self.scenario_cells.items())
+            ],
+            "time": self.time_combo.currentText(),
+        }
+
+    def _apply_scenario_dict(self, data: dict, update_preview: bool = True) -> None:
+        if not data:
+            return
+        width = int(data.get("width", self.scenario_width))
+        height = int(data.get("height", self.scenario_height))
+        self.scenario_width = max(4, min(40, width))
+        self.scenario_height = max(4, min(40, height))
+        if hasattr(self, "map_width_spin"):
+            self.map_width_spin.setValue(self.scenario_width)
+        if hasattr(self, "map_height_spin"):
+            self.map_height_spin.setValue(self.scenario_height)
+        if hasattr(self, "tactical_map_widget"):
+            self.tactical_map_widget.set_grid_dimensions(self.scenario_width, self.scenario_height)
+        attacker_pos = data.get("attacker_pos", self.scenario_attacker_pos)
+        defender_pos = data.get("defender_pos", self.scenario_defender_pos)
+        self.scenario_attacker_pos = (int(attacker_pos[0]), int(attacker_pos[1]))
+        self.scenario_defender_pos = (int(defender_pos[0]), int(defender_pos[1]))
+        self.scenario_cells = {}
+        for cell in data.get("terrain", []):
+            x = int(cell.get("x", 0))
+            y = int(cell.get("y", 0))
+            terrain = str(cell.get("terrain", "normal"))
+            if 0 <= x < self.scenario_width and 0 <= y < self.scenario_height and terrain != "normal":
+                self.scenario_cells[(x, y)] = terrain
+        self._move_path_preview = []
+        self._ensure_scenario_positions()
+        self._update_move_limits()
+        self._update_move_preview()
+        if "time" in data:
+            self._set_combo_text(self.time_combo, data.get("time"))
+        if update_preview:
+            self._refresh_scenario_preview()
+            self._update_move_button_state()
+
+    def _ensure_scenario_positions(self) -> None:
+        ax, ay = self.scenario_attacker_pos
+        dx, dy = self.scenario_defender_pos
+        ax = max(0, min(self.scenario_width - 1, ax))
+        ay = max(0, min(self.scenario_height - 1, ay))
+        dx = max(0, min(self.scenario_width - 1, dx))
+        dy = max(0, min(self.scenario_height - 1, dy))
+        self.scenario_attacker_pos = (ax, ay)
+        self.scenario_defender_pos = (dx, dy)
+        if self.scenario_attacker_pos == self.scenario_defender_pos:
+            new_dx = min(self.scenario_width - 1, ax + 1)
+            if new_dx == ax:
+                new_dx = max(0, ax - 1)
+            self.scenario_defender_pos = (new_dx, dy)
+
+    def _update_move_limits(self) -> None:
+        if hasattr(self, "move_x"):
+            self.move_x.setMaximum(max(0, self.scenario_width - 1))
+        if hasattr(self, "move_y"):
+            self.move_y.setMaximum(max(0, self.scenario_height - 1))
+        self._update_move_button_state()
+
+    def _update_move_button_state(self) -> None:
+        if not hasattr(self, "move_button"):
+            return
+        target = (int(self.move_x.value()), int(self.move_y.value()))
+        preview_map = self._build_scenario_map_only()
+        tile = preview_map.get_tile(*target)
+        occupied = target == self.scenario_defender_pos
+        valid = tile is not None and tile.passable and not occupied
+        self.move_button.setEnabled(valid)
+
+    def _resize_scenario_map(self) -> None:
+        self.scenario_width = int(self.map_width_spin.value())
+        self.scenario_height = int(self.map_height_spin.value())
+        self.scenario_cells = {
+            (x, y): t
+            for (x, y), t in self.scenario_cells.items()
+            if x < self.scenario_width and y < self.scenario_height
+        }
+        self._ensure_scenario_positions()
+        self._update_move_limits()
+        if hasattr(self, "tactical_map_widget"):
+            self.tactical_map_widget.set_grid_dimensions(self.scenario_width, self.scenario_height)
+        self._refresh_scenario_preview()
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.setCurrentText("Custom")
+
+    def _clear_scenario_terrain(self) -> None:
+        self.scenario_cells = {}
+        self._refresh_scenario_preview()
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.setCurrentText("Custom")
+
+    def _load_preset(self) -> None:
+        preset_name = self.preset_combo.currentText()
+        if preset_name == "Custom":
+            return
+        preset = self._scenario_presets.get(preset_name)
+        if not preset:
+            return
+        self._apply_scenario_dict(preset)
+        self._refresh_scenario_preview()
+
+    def _on_scenario_cell_clicked(self, x: int, y: int) -> None:
+        tool = self.map_tool_combo.currentText()
+        if tool == "Paint Terrain":
+            terrain = self.terrain_combo.currentText().lower()
+            if terrain == "normal":
+                self.scenario_cells.pop((x, y), None)
+            else:
+                self.scenario_cells[(x, y)] = terrain
+        elif tool == "Erase Terrain":
+            self.scenario_cells.pop((x, y), None)
+        elif tool == "Place Character 1":
+            self.scenario_attacker_pos = (x, y)
+            self._ensure_scenario_positions()
+        elif tool == "Place Character 2":
+            self.scenario_defender_pos = (x, y)
+            self._ensure_scenario_positions()
+        self._refresh_scenario_preview()
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.setCurrentText("Custom")
+
+    def _on_scenario_cell_hover(self, x: int, y: int) -> None:
+        self._hover_cell = (x, y)
+        if self.overlay_path_check.isChecked():
+            self._refresh_scenario_preview()
+
+    def _range_bounds_for_weapon(self, weapon) -> tuple[int, int]:
+        if weapon.range_category == RangeCategory.MELEE:
+            return (0, 1)
+        if weapon.range_category == RangeCategory.SKIRMISHING:
+            return (2, 8)
+        if weapon.range_category == RangeCategory.RANGED:
+            return (6, 30)
+        return (0, 1)
+
+    def _is_distance_in_range(self, weapon, distance: int) -> bool:
+        min_r, max_r = self._range_bounds_for_weapon(weapon)
+        return min_r <= distance <= max_r
+
+    def _update_action_availability(self) -> None:
+        if not hasattr(self, "player_action1_combo"):
+            return
+        dist = abs(self.scenario_attacker_pos[0] - self.scenario_defender_pos[0]) + abs(
+            self.scenario_attacker_pos[1] - self.scenario_defender_pos[1]
+        )
+        attacker = self.attacker_editor.to_participant()
+        weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
+        attack_ok = self._is_distance_in_range(weapon, dist)
+        for combo in (self.player_action1_combo, self.player_action2_combo):
+            idx = combo.findText("Attack")
+            if idx >= 0:
+                item = combo.model().item(idx)
+                if item:
+                    item.setEnabled(attack_ok)
+                if not attack_ok and combo.currentText() == "Attack":
+                    combo.setCurrentText("Skip")
+
+    def _build_overlay_data(self) -> tuple[dict, list]:
+        overlays: dict[str, list[tuple[int, int]]] = {}
+        path: list[tuple[int, int]] = []
+        if not hasattr(self, "overlay_source_combo"):
+            return overlays, path
+        source = self.overlay_source_combo.currentText()
+        if source == "None":
+            return overlays, path
+        actor_pos = self.scenario_attacker_pos if source == "Character 1" else self.scenario_defender_pos
+        participant = self.attacker_editor.to_participant() if source == "Character 1" else self.defender_editor.to_participant()
+        weapon = participant.weapon_main or AVALORE_WEAPONS["Unarmed"]
+        preview_map = self._build_scenario_map_only()
+        if self.overlay_range_check.isChecked():
+            min_r, max_r = self._range_bounds_for_weapon(weapon)
+            overlays["range"] = preview_map.get_tiles_in_range(actor_pos[0], actor_pos[1], min_r, max_r)
+        if self.overlay_los_check.isChecked():
+            los_cells = []
+            blocked_cells = []
+            for y in range(self.scenario_height):
+                for x in range(self.scenario_width):
+                    if preview_map.has_line_of_sight(actor_pos, (x, y)):
+                        los_cells.append((x, y))
+                    else:
+                        blocked_cells.append((x, y))
+            overlays["los"] = los_cells
+            overlays["blocked"] = blocked_cells
+        if self.overlay_path_check.isChecked():
+            if getattr(self, "_move_path_preview", None):
+                path = self._move_path_preview
+            elif self._hover_cell:
+                path = preview_map.find_path(actor_pos[0], actor_pos[1], self._hover_cell[0], self._hover_cell[1]) or []
+        return overlays, path
+
+    def _scenario_snapshot(self) -> dict:
+        cells = []
+        for y in range(self.scenario_height):
+            for x in range(self.scenario_width):
+                terrain = self.scenario_cells.get((x, y), "normal")
+                occupant = None
+                if (x, y) == self.scenario_attacker_pos:
+                    occupant = self.attacker_editor.name_input.text() or "Attacker"
+                elif (x, y) == self.scenario_defender_pos:
+                    occupant = self.defender_editor.name_input.text() or "Defender"
+                cells.append({
+                    "x": x,
+                    "y": y,
+                    "terrain": terrain,
+                    "occupant": occupant,
+                })
+        overlays, path = self._build_overlay_data()
+        return {
+            "label": "Scenario",
+            "width": self.scenario_width,
+            "height": self.scenario_height,
+            "cells": cells,
+            "actor": {"position": self.scenario_attacker_pos},
+            "target": {"position": self.scenario_defender_pos},
+            "overlays": overlays,
+            "path": path,
+        }
+
+    def _refresh_scenario_preview(self) -> None:
+        if hasattr(self, "tactical_map_widget"):
+            self.tactical_map_widget.draw_snapshot(self._scenario_snapshot())
+        self._update_action_availability()
+        self._update_move_button_state()
+
+    def _build_tactical_map(self, attacker: CombatParticipant, defender: CombatParticipant) -> TacticalMap:
+        tactical_map = TacticalMap(self.scenario_width, self.scenario_height)
+        terrain_costs = {
+            "forest": 2,
+            "water": 2,
+            "mountain": 3,
+            "road": 1,
+            "wall": 999,
+        }
+        for (x, y), terrain in self.scenario_cells.items():
+            tile = tactical_map.get_tile(x, y)
+            if not tile:
+                continue
+            terrain_enum = TerrainType(terrain) if terrain in TerrainType._value2member_map_ else TerrainType.NORMAL
+            tile.terrain_type = terrain_enum
+            if terrain == "wall":
+                tile.passable = False
+            if terrain in terrain_costs and terrain != "wall":
+                tile.move_cost = terrain_costs[terrain]
+        attacker.position = self.scenario_attacker_pos
+        defender.position = self.scenario_defender_pos
+        tactical_map.set_occupant(*attacker.position, attacker)
+        tactical_map.set_occupant(*defender.position, defender)
+        return tactical_map
+
+    def _build_scenario_map_only(self) -> TacticalMap:
+        tactical_map = TacticalMap(self.scenario_width, self.scenario_height)
+        terrain_costs = {
+            "forest": 2,
+            "water": 2,
+            "mountain": 3,
+            "road": 1,
+            "wall": 999,
+        }
+        for (x, y), terrain in self.scenario_cells.items():
+            tile = tactical_map.get_tile(x, y)
+            if not tile:
+                continue
+            terrain_enum = TerrainType(terrain) if terrain in TerrainType._value2member_map_ else TerrainType.NORMAL
+            tile.terrain_type = terrain_enum
+            if terrain == "wall":
+                tile.passable = False
+            if terrain in terrain_costs and terrain != "wall":
+                tile.move_cost = terrain_costs[terrain]
+        return tactical_map
+
+    def _decorate_snapshot(self, snapshot: dict, include_path: bool = False, engine: AvaCombatEngine | None = None) -> dict:
+        decorated = copy.deepcopy(snapshot)
+        decorated["overlays"] = self._build_overlays_for_snapshot(decorated, engine)
+        if include_path and getattr(self, "_move_path_preview", None):
+            decorated["path"] = self._move_path_preview
+        return decorated
+
+    def _build_overlays_for_snapshot(self, snapshot: dict, engine: AvaCombatEngine | None = None) -> dict:
+        overlays: dict[str, list[tuple[int, int]]] = {}
+        actor_pos = snapshot.get("actor", {}).get("position")
+        target_pos = snapshot.get("target", {}).get("position")
+        if actor_pos:
+            min_range = 0
+            max_range = 8
+            if engine:
+                actor_name = snapshot.get("actor", {}).get("name")
+                actor = next((p for p in engine.participants if getattr(p.character, "name", None) == actor_name), None)
+                if actor:
+                    weapon = actor.weapon_main or AVALORE_WEAPONS["Unarmed"]
+                    if weapon.range_category == RangeCategory.MELEE:
+                        min_range, max_range = 0, 1
+                    elif weapon.range_category == RangeCategory.SKIRMISHING:
+                        min_range, max_range = 2, 8
+                    else:
+                        min_range, max_range = 6, 30
+            ax, ay = actor_pos
+            cells = []
+            for y in range(snapshot.get("height", 0)):
+                for x in range(snapshot.get("width", 0)):
+                    dist = abs(x - ax) + abs(y - ay)
+                    if min_range <= dist <= max_range:
+                        cells.append((x, y))
+            overlays["range"] = cells
+        if actor_pos and target_pos:
+            line_cells = self._line_cells(actor_pos, target_pos)
+            visible = self._has_line_of_sight(snapshot, actor_pos, target_pos, engine)
+            overlays["los" if visible else "blocked"] = line_cells
+        return overlays
+
+    def _line_cells(self, a: tuple[int, int], b: tuple[int, int]) -> list[tuple[int, int]]:
+        ax, ay = a
+        bx, by = b
+        dx = abs(bx - ax)
+        dy = -abs(by - ay)
+        sx = 1 if ax < bx else -1
+        sy = 1 if ay < by else -1
+        err = dx + dy
+        x, y = ax, ay
+        cells = []
+        while True:
+            cells.append((x, y))
+            if (x, y) == (bx, by):
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x += sx
+            if e2 <= dx:
+                err += dx
+                y += sy
+        return cells
+
+    def _has_line_of_sight(self, snapshot: dict, a: tuple[int, int], b: tuple[int, int], engine: AvaCombatEngine | None) -> bool:
+        if engine and engine.tactical_map:
+            return engine.tactical_map.has_line_of_sight(a, b)
+        terrain_map = {(cell["x"], cell["y"]): cell.get("terrain", "normal") for cell in snapshot.get("cells", [])}
+        for x, y in self._line_cells(a, b):
+            if (x, y) not in (a, b) and terrain_map.get((x, y)) == "wall":
+                return False
+        return True
+
+    def _update_move_preview(self) -> None:
+        if not hasattr(self, "move_x") or not hasattr(self, "move_y"):
+            return
+        try:
+            tactical_map = self._build_scenario_map_only()
+            start = self.scenario_attacker_pos
+            goal = (int(self.move_x.value()), int(self.move_y.value()))
+            if start == goal:
+                self._move_path_preview = []
+            else:
+                path = tactical_map.find_path(start[0], start[1], goal[0], goal[1])
+                self._move_path_preview = path or []
+            self._refresh_scenario_preview()
+        except Exception:
+            # Avoid blocking input if preview fails
+            self._move_path_preview = []
+
+    def _open_scenario_editor(self) -> None:
+        dialog = ScenarioEditorDialog(
+            self._serialize_scenario(),
+            self.attacker_editor.name_input.text(),
+            self.defender_editor.name_input.text(),
+            self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self._apply_scenario_dict(dialog.get_scenario())
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.setCurrentText("Custom")
+            self._save_settings()
+
+    def _save_scenario(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Scenario", "avasim_scenario.json", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._serialize_scenario(), f, indent=2)
+            QMessageBox.information(self, "Scenario saved", "Scenario saved successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Save failed", f"Could not save scenario:\n{exc}")
+
+    def _load_scenario(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Scenario", "", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._apply_scenario_dict(data)
+            if hasattr(self, "preset_combo"):
+                self.preset_combo.setCurrentText("Custom")
+            self._save_settings()
+        except Exception as exc:
+            QMessageBox.critical(self, "Load failed", f"Could not load scenario:\n{exc}")
 
     def _save_setup_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save Setup", "avasim_setup.json", "JSON Files (*.json)")
@@ -843,6 +1687,67 @@ class MainWindow(QWidget):
         """Render action log with syntax highlighting."""
         return TextHighlighter.highlight_html(lines)
 
+    def _collapse_log_runs(self, lines: list[str]) -> list[str]:
+        if not lines:
+            return []
+        collapsed = []
+        prev = lines[0]
+        count = 1
+        for line in lines[1:]:
+            if line == prev:
+                count += 1
+                continue
+            if count > 1:
+                collapsed.append(f"{prev} (x{count})")
+            else:
+                collapsed.append(prev)
+            prev = line
+            count = 1
+        if count > 1:
+            collapsed.append(f"{prev} (x{count})")
+        else:
+            collapsed.append(prev)
+        return collapsed
+
+    def _set_action_log(self, lines: list[str]) -> None:
+        self._last_action_lines = list(lines)
+        self._rerender_action_log()
+
+    def _rerender_action_log(self) -> None:
+        if not hasattr(self, "action_view"):
+            return
+        lines = self._last_action_lines or []
+        if self.collapse_log_check.isChecked():
+            lines = self._collapse_log_runs(lines)
+        self.action_view.setHtml(self._render_action_log(lines))
+
+    def _toggle_decision_drawer(self) -> None:
+        self.decision_group.setVisible(self.decision_toggle.isChecked())
+
+    def _log_decision(self, engine: AvaCombatEngine, message: str) -> None:
+        if not self.show_math_check.isChecked():
+            return
+        self.decision_log.append(message)
+        engine.combat_log.append(message)
+
+    def _set_decision_log(self) -> None:
+        if not hasattr(self, "decision_view"):
+            return
+        if not self.decision_log:
+            self.decision_view.setPlainText("No decision data recorded.")
+        else:
+            self.decision_view.setPlainText("\n".join(self.decision_log))
+
+    def _show_toast(self, message: str, kind: str = "info") -> None:
+        color_map = {"info": "#222", "warning": "#805b00", "error": "#7a1f1f", "success": "#1f5f2a"}
+        bg = color_map.get(kind, "#222")
+        self.toast_label.setStyleSheet(
+            f"background:{bg};color:#fff;padding:6px 12px;border-radius:6px;font-size:10pt;"
+        )
+        self.toast_label.setText(message)
+        self.toast_label.setVisible(True)
+        QTimer.singleShot(2500, lambda: self.toast_label.setVisible(False))
+
     def _render_map_grid(self, tactical_map: TacticalMap | None) -> None:
         if tactical_map is None:
             return
@@ -871,7 +1776,11 @@ class MainWindow(QWidget):
     def _render_visual_map(self, snapshot: dict | None) -> None:
         """Render visual tactical map using enhanced widget."""
         if hasattr(self, 'tactical_map_widget'):
-            self.tactical_map_widget.draw_snapshot(snapshot)
+            if snapshot:
+                decorated = self._decorate_snapshot(snapshot, engine=self._last_engine)
+                self.tactical_map_widget.draw_snapshot(decorated)
+            else:
+                self.tactical_map_widget.draw_snapshot(None)
 
     def _show_howto(self) -> None:
         QMessageBox.information(
@@ -889,17 +1798,94 @@ class MainWindow(QWidget):
             "Ctrl+N: New setup\nCtrl+O: Load setup\nCtrl+S: Save setup as\nCtrl+E: Export logs\nCtrl+T: Toggle theme\nAlt+F4: Exit",
         )
 
+    def _check_for_updates(self) -> None:
+        QDesktopServices.openUrl(QUrl("https://github.com/Von-Van/avasim"))
+
+    def _check_for_updates(self) -> None:
+        QDesktopServices.openUrl(QUrl("https://github.com/Von-Van/avasim"))
+
     def _export_logs(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Export Logs", "avasim_logs.txt", "Text Files (*.txt)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Logs",
+            "avasim_logs.txt",
+            "Text Files (*.txt);;HTML Files (*.html);;CSV Files (*.csv)",
+        )
         if not path:
             return
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("Action Log\n" + self.action_view.toPlainText() + "\n\n")
-                f.write("Map Log\n" + self.map_view.toPlainText())
+            suffix = Path(path).suffix.lower()
+            action_lines = self._last_action_lines or self.action_view.toPlainText().splitlines()
+            map_lines = self.map_view.toPlainText().splitlines()
+            if suffix == ".html":
+                action_html = self._render_action_log(action_lines)
+                map_html = "<br>".join(html.escape(line) for line in map_lines)
+                html_doc = (
+                    "<html><head><meta charset='utf-8'><title>AvaSim Logs</title></head><body>"
+                    "<h2>Action Log</h2>"
+                    f"{action_html}"
+                    "<h2>Map Log</h2>"
+                    f"<div style='font-family:monospace;white-space:pre-wrap;'>{map_html}</div>"
+                    "</body></html>"
+                )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(html_doc)
+            elif suffix == ".csv":
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["section", "line"])
+                    for line in action_lines:
+                        writer.writerow(["action", line])
+                    for line in map_lines:
+                        writer.writerow(["map", line])
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("Action Log\n" + "\n".join(action_lines) + "\n\n")
+                    f.write("Map Log\n" + "\n".join(map_lines))
             QMessageBox.information(self, "Export complete", "Logs exported successfully.")
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", f"Could not export logs:\n{exc}")
+
+    def _export_logs_html(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export Logs (HTML)", "avasim_logs.html", "HTML Files (*.html)")
+        if not path:
+            return
+        try:
+            action_lines = self._last_action_lines or self.action_view.toPlainText().splitlines()
+            map_lines = self.map_view.toPlainText().splitlines()
+            action_html = self._render_action_log(action_lines)
+            map_html = "<br>".join(html.escape(line) for line in map_lines)
+            html_doc = (
+                "<html><head><meta charset='utf-8'><title>AvaSim Logs</title></head><body>"
+                "<h2>Action Log</h2>"
+                f"{action_html}"
+                "<h2>Map Log</h2>"
+                f"<div style='font-family:monospace;white-space:pre-wrap;'>{map_html}</div>"
+                "</body></html>"
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html_doc)
+            QMessageBox.information(self, "Export complete", "HTML log exported successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not export HTML logs:\n{exc}")
+
+    def _export_logs_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export Logs (CSV)", "avasim_logs.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            action_lines = self._last_action_lines or self.action_view.toPlainText().splitlines()
+            map_lines = self.map_view.toPlainText().splitlines()
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["section", "line"])
+                for line in action_lines:
+                    writer.writerow(["action", line])
+                for line in map_lines:
+                    writer.writerow(["map", line])
+            QMessageBox.information(self, "Export complete", "CSV log exported successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not export CSV logs:\n{exc}")
 
     def closeEvent(self, event) -> None:  # type: ignore
         self._save_settings()
@@ -907,15 +1893,13 @@ class MainWindow(QWidget):
 
     def run_simulation(self):
         try:
+            self.decision_log = []
             attacker = self.attacker_editor.to_participant()
             defender = self.defender_editor.to_participant()
-            tactical_map = TacticalMap(10, 10)
-            attacker.position = (0, 0)
-            defender.position = (3, 0)
-            tactical_map.set_occupant(*attacker.position, attacker)
-            tactical_map.set_occupant(*defender.position, defender)
+            tactical_map = self._build_tactical_map(attacker, defender)
 
             engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            self._last_engine = engine
             engine.set_time_of_day(self._time_of_day)
             engine.party_surprised = (self.surprise_combo.currentText() == "Party Surprised")
             engine.party_initiated = (self.surprise_combo.currentText() == "Party Ambushes")
@@ -961,12 +1945,14 @@ class MainWindow(QWidget):
             engine.combat_log.append(engine.get_combat_summary())
 
             action_lines = ["Combat finished", f"Turns executed: {turns}", "", "Combat Log:"] + engine.combat_log
-            self.action_view.setHtml(self._render_action_log(action_lines))
+            self._set_action_log(action_lines)
             self.map_view.setPlainText("\n".join(engine.map_log))
             self.status_view.setHtml(self._format_status_badges([attacker, defender]))
+            self._update_combat_bars(attacker, defender)
             self._render_map_grid(engine.tactical_map)
             self._render_initiative(engine)
             self._set_replay_data(engine.map_snapshots)
+            self._set_decision_log()
             self._save_settings()
         except Exception as exc:
             QMessageBox.critical(self, "Simulation failed", f"An error occurred while simulating:\n{exc}")
@@ -975,22 +1961,23 @@ class MainWindow(QWidget):
         try:
             attacker = self.attacker_editor.to_participant()
             defender = self.defender_editor.to_participant()
-            tactical_map = TacticalMap(10, 10)
-            attacker.position = (0, 0)
-            defender.position = (3, 0)
-            tactical_map.set_occupant(*attacker.position, attacker)
-            tactical_map.set_occupant(*defender.position, defender)
+            tactical_map = self._build_tactical_map(attacker, defender)
             engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            self._last_engine = engine
             engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
             success = engine.action_move(attacker, int(self.move_x.value()), int(self.move_y.value()))
             if not success:
                 engine.combat_log.append("Move failed.")
+                self._show_toast("Move failed.", "warning")
+                self._show_toast("Move failed.", "warning")
             engine._log_map_state("After move")
             engine.combat_log.append(engine.get_combat_summary())
-            self.action_view.setHtml(self._render_action_log(engine.combat_log))
+            self._set_action_log(engine.combat_log)
             self.map_view.setPlainText("\n".join(engine.map_log))
             self.status_view.setHtml(self._format_status_badges([attacker, defender]))
+            self._update_combat_bars(attacker, defender)
             self._render_map_grid(engine.tactical_map)
+            self._set_decision_log()
             self._save_settings()
         except Exception as exc:
             QMessageBox.critical(self, "Move failed", f"An error occurred while moving:\n{exc}")
@@ -1041,6 +2028,8 @@ class MainWindow(QWidget):
         self.action_view.setFont(mono_font)
         self.status_view.setFont(mono_font)
         self.map_view.setFont(map_font)
+        if hasattr(self, "decision_view"):
+            self.decision_view.setFont(mono_font)
 
     def _render_initiative(self, engine: AvaCombatEngine) -> None:
         if not engine.turn_order:
@@ -1121,38 +2110,95 @@ class MainWindow(QWidget):
 
     def _format_status_badges(self, participants: list[CombatParticipant]) -> str:
         chips: list[str] = []
+        status_icons = {
+            "Prone": "PRN",
+            "Slowed": "SLO",
+            "Disarmed": "DIS",
+            "Marked": "MRK",
+            "Vulnerable": "VUL",
+            "Hidden": "HID",
+        }
         for p in participants:
             if not p:
                 continue
             name = html.escape(p.character.name or "?")
             arch = ", ".join(sorted(getattr(p.character, "archetypes", []))) if hasattr(p, "character") else ""
             hp = f"HP {p.current_hp}/{p.max_hp}"
+            hp_pct = int((p.current_hp / max(1, p.max_hp)) * 100)
+            armor_label = p.armor.name if p.armor else "No Armor"
+            armor_rating = 0
+            if p.armor:
+                if p.armor.category.name == "LIGHT":
+                    armor_rating = 1
+                elif p.armor.category.name == "MEDIUM":
+                    armor_rating = 2
+                elif p.armor.category.name == "HEAVY":
+                    armor_rating = 3
+            armor_pct = int((armor_rating / 3) * 100) if armor_rating else 0
             statuses = []
             if p.is_blocking:
-                statuses.append(("Blocking", "#264653"))
+                statuses.append(("BLK Blocking", "#264653"))
             if p.is_evading:
-                statuses.append(("Evading", "#2a9d8f"))
+                statuses.append(("EVD Evading", "#2a9d8f"))
             for status in getattr(p, "status_effects", set()):
-                statuses.append((status.name.title(), "#e76f51"))
+                label = status.name.title()
+                icon = status_icons.get(label, "STS")
+                statuses.append((f"{icon} {label}", "#e76f51"))
             if not statuses:
-                statuses.append(("Stable", "#6c757d"))
+                statuses.append(("OK Stable", "#6c757d"))
 
             status_html = " ".join([f"<span style='background:{color};color:white;padding:2px 6px;border-radius:8px;'>{label}</span>" for label, color in statuses])
-            chips.append(f"<div style='margin-bottom:4px;'><b>{name}</b> <span style='color:#888;'>[{arch}]</span> — <span style='color:#555;'>{hp}</span> {status_html}</div>")
+            hp_bar = (
+                f"<div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;margin-top:4px;'>"
+                f"<div style='width:{hp_pct}%;height:6px;background:#e63946;'></div></div>"
+            )
+            armor_bar = (
+                f"<div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;margin-top:3px;'>"
+                f"<div style='width:{armor_pct}%;height:6px;background:#457b9d;'></div></div>"
+            )
+            chips.append(
+                f"<div style='margin-bottom:8px;'><b>{name}</b> <span style='color:#888;'>[{arch}]</span> — "
+                f"<span style='color:#555;'>{hp}</span> {status_html}"
+                f"<div style='color:#666;font-size:9pt;margin-top:2px;'>Armor: {armor_label}</div>"
+                f"{hp_bar}{armor_bar}</div>"
+            )
         return "".join(chips)
+
+    def _update_combat_bars(self, attacker: CombatParticipant, defender: CombatParticipant) -> None:
+        if not hasattr(self, "attacker_hp_bar"):
+            return
+        from combat.enums import ArmorCategory
+
+        def armor_score(p: CombatParticipant) -> int:
+            if not p.armor:
+                return 0
+            if p.armor.category == ArmorCategory.LIGHT:
+                return 1
+            if p.armor.category == ArmorCategory.MEDIUM:
+                return 2
+            if p.armor.category == ArmorCategory.HEAVY:
+                return 3
+            return 0
+
+        self.attacker_hp_bar.setMaximum(max(1, attacker.max_hp))
+        self.attacker_hp_bar.setValue(max(0, attacker.current_hp))
+        self.attacker_armor_bar.setValue(armor_score(attacker))
+        self.defender_hp_bar.setMaximum(max(1, defender.max_hp))
+        self.defender_hp_bar.setValue(max(0, defender.current_hp))
+        self.defender_armor_bar.setValue(armor_score(defender))
 
     def _execute_player_turn(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         actions = self._selected_player_actions()
         for action in actions:
             if current.current_hp <= 0 or current.actions_remaining <= 0 or target.current_hp <= 0:
                 break
-            if self.show_math_check.isChecked():
-                dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
-                engine.combat_log.append(f"Decision: Player chose {action} (dist {dist})")
+            dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
+            self._log_decision(engine, f"Decision: Player chose {action} (dist {dist})")
             if action == "Attack":
                 weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
                 if not engine.is_in_range(current, target, weapon):
                     engine.combat_log.append("Player attack out of range; action wasted.")
+                    self._show_toast("Attack out of range.", "warning")
                     current.spend_actions(weapon.actions_required)
                     continue
                 engine.perform_attack(current, target, weapon=weapon)
@@ -1165,7 +2211,18 @@ class MainWindow(QWidget):
         # Movement-to-range step before feats/attacks
         weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
         dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
-        engine.combat_log.append(f"Decision: Auto acting with {weapon.name} (dist {dist}, range {weapon.range_category.name})")
+        expected = self._expected_attack_value(current, target, weapon)
+        attack_mod = self._attack_mod_for_weapon(current, weapon)
+        evasion_mod = self._evasion_mod(target)
+        soak = self._expected_soak(target)
+        self._log_decision(
+            engine,
+            f"Decision: Auto acting with {weapon.name} (dist {dist}, range {weapon.range_category.name}, EV {expected:.1f})",
+        )
+        self._log_decision(
+            engine,
+            f"EV breakdown: aim {attack_mod:+d}, evade {evasion_mod:+d}, expected soak {soak:.1f}",
+        )
         self._move_to_preferred_range(engine, current, target, weapon)
 
         weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
@@ -1221,6 +2278,7 @@ class MainWindow(QWidget):
         if getattr(current, "has_feat", lambda x: False)("Hamstring") and weapon.name in {"Whip", "Recurve Bow", "Crossbow"}:
             used = engine.action_hamstring(current, target, weapon)
             if used.get("used"):
+                self._log_decision(engine, "Feat hook: Hamstring (eligible weapon, limited action).")
                 return
 
         # Fanning Blade for small/throwing style when multiple foes are nearby
@@ -1237,12 +2295,14 @@ class MainWindow(QWidget):
                 if nearby >= 2:
                     used = engine.action_fanning_blade(current, weapon, cx, cy)
                     if used.get("used"):
+                        self._log_decision(engine, f"Feat hook: Fanning Blade (clustered targets={nearby}).")
                         return
 
         # Galestorm Strike (two-handed heavy) for burst knockdown potential
         if getattr(current, "has_feat", lambda x: False)("Galestorm Stance") and weapon.name in {"Greatsword", "Polearm", "Staff"}:
             used = engine.action_galestorm_strike(current, target, weapon)
             if used.get("used"):
+                self._log_decision(engine, "Feat hook: Galestorm Strike (two-handed stance).")
                 return
 
         # Whirling Devil: activate before moving through foes
@@ -1263,6 +2323,7 @@ class MainWindow(QWidget):
                 if dist <= 1:
                     used = engine.action_rangers_gambit(current, target, weapon)
                     if used.get("used"):
+                        self._log_decision(engine, "Feat hook: Ranger's Gambit (bow at melee range).")
                         return
 
         # Piercing/AArmor piercer when target blocking with shield
@@ -1270,10 +2331,12 @@ class MainWindow(QWidget):
             if getattr(current, "has_feat", lambda x: False)("Piercing Strike"):
                 used = engine.action_piercing_strike(current, target, weapon)
                 if used.get("used"):
+                    self._log_decision(engine, "Feat hook: Piercing Strike (target blocking with shield).")
                     return
             if getattr(current, "has_feat", lambda x: False)("Armor Piercer"):
                 used = engine.action_armor_piercer(current, target, weapon)
                 if used.get("used"):
+                    self._log_decision(engine, "Feat hook: Armor Piercer (target blocking with shield).")
                     return
 
         # Feint to ignore Shieldmaster/Quickfooted if EV is low
@@ -1281,6 +2344,7 @@ class MainWindow(QWidget):
             if self._expected_attack_value(current, target, weapon) < 1.0:
                 used = engine.action_feint(current, target)
                 if used.get("used"):
+                    self._log_decision(engine, "Feat hook: Feint (low expected value).")
                     return
 
         # Trick Shot (ranged) choose effect: dazzling if not marked, else bodkin
@@ -1288,6 +2352,7 @@ class MainWindow(QWidget):
             effect = "dazzling" if not target.has_status(StatusEffect.MARKED) else "bodkin"
             used = engine.action_trick_shot(current, target, weapon, effect)
             if used.get("used"):
+                self._log_decision(engine, f"Feat hook: Trick Shot ({effect}).")
                 return
 
         # Two Birds One Stone when a second target is lined up behind the first
@@ -1295,12 +2360,14 @@ class MainWindow(QWidget):
             if self._has_trailing_target(engine, current, target):
                 used = engine.action_two_birds_one_stone(current, target, weapon)
                 if used.get("used"):
+                    self._log_decision(engine, "Feat hook: Two Birds One Stone (lined-up target).")
                     return
 
         # Volley for bows if feat available
         if getattr(current, "has_feat", lambda x: False)("Volley") and weapon.name in {"Recurve Bow", "Longbow"}:
             used = engine.action_volley(current, target, weapon)
             if used.get("used"):
+                self._log_decision(engine, "Feat hook: Volley (bow burst).")
                 return
 
         # Topple/Shove when Forward Charge primed
@@ -1335,6 +2402,7 @@ class MainWindow(QWidget):
         if getattr(current, "has_feat", lambda x: False)("Vicious Mockery") and expected_value < 0.8:
             used = engine.action_vicious_mockery(current, target)
             if used.get("used"):
+                self._log_decision(engine, "Feat hook: Vicious Mockery (attack EV low).")
                 expected_value = self._expected_attack_value(current, target, weapon)
 
         # Decide stance mathematically based on stats and equipment
@@ -1450,6 +2518,9 @@ class MainWindow(QWidget):
                 break  # found in-band without needing dash or with current mode
 
         if best and current.actions_remaining > 0:
+            new_dist = engine.tactical_map.manhattan_distance(best[0], best[1], target.position[0], target.position[1])
+            move_kind = "Dash" if best_use_dash else "Move"
+            self._log_decision(engine, f"Range move: {dist} → {new_dist} via {move_kind} to {best}")
             if best_use_dash:
                 if not engine.action_dash(current, *best):
                     engine.action_move(current, *best)
@@ -1592,8 +2663,10 @@ class MainWindow(QWidget):
         if defend:
             # Prefer the better stance
             if p_block >= p_evade and current.shield:
+                self._log_decision(engine, f"Stance: Block (p_block={p_block:.2f} vs p_evade={p_evade:.2f})")
                 engine.action_block(current)
             else:
+                self._log_decision(engine, f"Stance: Evade (p_evade={p_evade:.2f} vs p_block={p_block:.2f})")
                 engine.action_evade(current)
         else:
             # Clear stances by not re-applying; the engine resets per turn
