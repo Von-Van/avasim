@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#f4f6fb" />
+  <rect x="60" y="40" width="1160" height="640" rx="20" fill="#ffffff" stroke="#e5e7eb" />
+  <rect x="60" y="40" width="1160" height="72" rx="20" fill="#0f172a" />
+  <text x="100" y="88" font-family="Arial, sans-serif" font-size="24" fill="#f9fafb">Scenario Builder</text>
+
+  <rect x="100" y="140" width="280" height="500" rx="14" fill="#f8fafc" stroke="#e5e7eb" />
+  <text x="120" y="180" font-family="Arial, sans-serif" font-size="16" fill="#111827">Tools</text>
+  <rect x="120" y="210" width="240" height="34" rx="10" fill="#dbeafe" />
+  <rect x="120" y="255" width="240" height="34" rx="10" fill="#e5e7eb" />
+  <rect x="120" y="300" width="240" height="34" rx="10" fill="#e5e7eb" />
+  <text x="120" y="370" font-family="Arial, sans-serif" font-size="16" fill="#111827">Terrain</text>
+  <rect x="120" y="400" width="240" height="34" rx="10" fill="#e5e7eb" />
+  <rect x="120" y="445" width="240" height="34" rx="10" fill="#e5e7eb" />
+  <rect x="120" y="490" width="240" height="34" rx="10" fill="#e5e7eb" />
+
+  <rect x="420" y="140" width="760" height="500" rx="18" fill="#f8fafc" stroke="#e5e7eb" />
+  <text x="450" y="180" font-family="Arial, sans-serif" font-size="16" fill="#111827">Map Editor</text>
+  <g fill="#e5e7eb">
+    <rect x="450" y="210" width="28" height="28" />
+    <rect x="482" y="210" width="28" height="28" />
+    <rect x="514" y="210" width="28" height="28" />
+    <rect x="546" y="210" width="28" height="28" />
+    <rect x="578" y="210" width="28" height="28" />
+    <rect x="610" y="210" width="28" height="28" />
+    <rect x="642" y="210" width="28" height="28" />
+    <rect x="674" y="210" width="28" height="28" />
+    <rect x="706" y="210" width="28" height="28" />
+    <rect x="738" y="210" width="28" height="28" />
+  </g>
+  <g fill="#d1d5db">
+    <rect x="450" y="242" width="28" height="28" />
+    <rect x="482" y="242" width="28" height="28" />
+    <rect x="514" y="242" width="28" height="28" />
+    <rect x="546" y="242" width="28" height="28" />
+    <rect x="578" y="242" width="28" height="28" />
+    <rect x="610" y="242" width="28" height="28" />
+    <rect x="642" y="242" width="28" height="28" />
+    <rect x="674" y="242" width="28" height="28" />
+    <rect x="706" y="242" width="28" height="28" />
+    <rect x="738" y="242" width="28" height="28" />
+  </g>
+  <rect x="570" y="350" width="120" height="120" rx="12" fill="#bbf7d0" />
+  <rect x="730" y="400" width="120" height="120" rx="12" fill="#fecaca" />
+  <text x="450" y="580" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Preview layout for portfolio README. Replace with real screenshots.</text>
+</svg>

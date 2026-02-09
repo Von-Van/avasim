@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#f4f6fb" />
+  <rect x="60" y="40" width="1160" height="640" rx="20" fill="#ffffff" stroke="#e5e7eb" />
+  <rect x="60" y="40" width="1160" height="72" rx="20" fill="#111827" />
+  <text x="100" y="88" font-family="Arial, sans-serif" font-size="24" fill="#f9fafb">AvaSim Desktop Simulator</text>
+
+  <rect x="100" y="140" width="360" height="220" rx="14" fill="#f8fafc" stroke="#e5e7eb" />
+  <text x="120" y="180" font-family="Arial, sans-serif" font-size="16" fill="#111827">Combatants</text>
+  <rect x="120" y="200" width="320" height="18" rx="9" fill="#dbeafe" />
+  <rect x="120" y="230" width="260" height="18" rx="9" fill="#fee2e2" />
+  <rect x="120" y="260" width="300" height="18" rx="9" fill="#e5e7eb" />
+  <rect x="120" y="290" width="220" height="18" rx="9" fill="#e5e7eb" />
+
+  <rect x="100" y="380" width="360" height="260" rx="14" fill="#f8fafc" stroke="#e5e7eb" />
+  <text x="120" y="420" font-family="Arial, sans-serif" font-size="16" fill="#111827">Action Log</text>
+  <rect x="120" y="440" width="320" height="14" rx="7" fill="#e5e7eb" />
+  <rect x="120" y="465" width="280" height="14" rx="7" fill="#e5e7eb" />
+  <rect x="120" y="490" width="300" height="14" rx="7" fill="#e5e7eb" />
+  <rect x="120" y="515" width="260" height="14" rx="7" fill="#e5e7eb" />
+  <rect x="120" y="540" width="200" height="14" rx="7" fill="#e5e7eb" />
+
+  <rect x="500" y="140" width="680" height="500" rx="18" fill="#f8fafc" stroke="#e5e7eb" />
+  <text x="530" y="180" font-family="Arial, sans-serif" font-size="16" fill="#111827">Tactical Map</text>
+  <g fill="#e5e7eb">
+    <rect x="530" y="210" width="26" height="26" />
+    <rect x="560" y="210" width="26" height="26" />
+    <rect x="590" y="210" width="26" height="26" />
+    <rect x="620" y="210" width="26" height="26" />
+    <rect x="650" y="210" width="26" height="26" />
+    <rect x="680" y="210" width="26" height="26" />
+    <rect x="710" y="210" width="26" height="26" />
+    <rect x="740" y="210" width="26" height="26" />
+    <rect x="770" y="210" width="26" height="26" />
+    <rect x="800" y="210" width="26" height="26" />
+  </g>
+  <g fill="#d1d5db">
+    <rect x="530" y="240" width="26" height="26" />
+    <rect x="560" y="240" width="26" height="26" />
+    <rect x="590" y="240" width="26" height="26" />
+    <rect x="620" y="240" width="26" height="26" />
+    <rect x="650" y="240" width="26" height="26" />
+    <rect x="680" y="240" width="26" height="26" />
+    <rect x="710" y="240" width="26" height="26" />
+    <rect x="740" y="240" width="26" height="26" />
+    <rect x="770" y="240" width="26" height="26" />
+    <rect x="800" y="240" width="26" height="26" />
+  </g>
+  <rect x="920" y="340" width="120" height="120" rx="12" fill="#bfdbfe" />
+  <rect x="760" y="420" width="120" height="120" rx="12" fill="#fecaca" />
+  <text x="530" y="580" font-family="Arial, sans-serif" font-size="12" fill="#6b7280">Preview layout for portfolio README. Replace with real screenshots.</text>
+</svg>
