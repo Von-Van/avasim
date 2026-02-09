@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 from .enums import RangeCategory, ArmorCategory, ShieldType
-from .dice import roll_1d2, roll_1d3, roll_1d4
+from .dice import roll_1d2, roll_1d4
 
 @dataclass
 class Weapon:
@@ -48,9 +48,9 @@ class Armor:
         if self.category == ArmorCategory.LIGHT:
             soak = max(0, roll_1d2() - 1)  # 1d2-1 (0 or 1)
         elif self.category == ArmorCategory.MEDIUM:
-            soak = max(0, roll_1d3() - 1)  # 1d3-1 (0 to 2)
+            soak = max(0, roll_1d4() - 1)  # 1d4-1 (0 to 3)
         elif self.category == ArmorCategory.HEAVY:
-            soak = roll_1d3()  # 1d3 (1 to 3)
+            soak = roll_1d4()  # 1d4 (1 to 4)
         else:
             soak = 0
         if not meets_requirement:

@@ -60,6 +60,14 @@ class CombatParticipant:
     mockery_duration_rounds: int = 0
     spell_penalty_total: int = 0
     spell_penalty_duration_rounds: int = 0
+    spell_attack_penalty: int = 0
+    spell_attack_penalty_duration: int = 0
+    spell_evasion_bonus: int = 0
+    spell_evasion_bonus_duration: int = 0
+    spell_evasion_penalty: int = 0
+    spell_evasion_penalty_duration: int = 0
+    spell_soak_bonus: int = 0
+    spell_soak_bonus_duration: int = 0
     parry_bonus_next_turn: bool = False
     parry_damage_bonus_active: bool = False
     control_wall_bonus_targets: Set[Any] = field(default_factory=set)
@@ -92,11 +100,11 @@ class CombatParticipant:
             self.limited_action_used = True
         if self.is_critical and action_name not in {"dash", "evade", "block"}:
             # Critical state: most actions trigger death save
-            if self.has_feat("Death's Dance") and not self.free_action_while_critical_used:
-                self.free_action_while_critical_used = True
-            elif self.has_feat("Evasive Tactics") and action_name in {"riposte", "parry"}:
-                pass  # No death save for these
-            else:
+            # Dispatch to feat handlers to check for suppression
+            from .feat_handlers import FEAT_REGISTRY
+            suppressed = FEAT_REGISTRY.dispatch_on_critical_action(
+                self, action_name, {})
+            if not suppressed:
                 self.last_death_save_triggered = True
         return True
 
@@ -124,12 +132,12 @@ class CombatParticipant:
 
     def get_initiative_roll(self) -> int:
         from .dice import roll_2d10
+        from .feat_handlers import FEAT_REGISTRY
         total, _ = roll_2d10()
         bonus = self.character.get_stat("Dexterity")
-        if self.has_feat("First Strike"):
-            bonus += 5
-        elif self.has_feat("Always Ready"):
-            bonus += 3
+        # Dispatch initiative hooks (First Strike +5, Always Ready +3)
+        bonus = FEAT_REGISTRY.dispatch_modify_initiative(self, bonus)
+        # Skirmishing Party bonus (from nearby allies)
         if hasattr(self, 'engine') and getattr(self.engine, 'party_initiated', False) and hasattr(self, 'position') and self.engine.tactical_map:
             ax, ay = self.position
             for p in self.engine.participants:
@@ -162,14 +170,9 @@ class CombatParticipant:
         return any(f.name == feat_name for f in self.feats)
 
     def start_turn(self):
-        if self.has_feat("First Strike") and hasattr(self, '_first_turn_used'):
-            if not self._first_turn_used:
-                self.actions_remaining = 3
-                self._first_turn_used = True
-            else:
-                self.actions_remaining = self.actions_per_turn
-        else:
-            self.actions_remaining = self.actions_per_turn
+        from .feat_handlers import FEAT_REGISTRY
+        # Default actions
+        self.actions_remaining = self.actions_per_turn
         self.limited_action_used = False
         self.is_evading = False
         self.is_blocking = False
@@ -205,6 +208,22 @@ class CombatParticipant:
             self.spell_penalty_duration_rounds -= 1
             if self.spell_penalty_duration_rounds == 0:
                 self.spell_penalty_total = 0
+        if self.spell_attack_penalty_duration > 0:
+            self.spell_attack_penalty_duration -= 1
+            if self.spell_attack_penalty_duration == 0:
+                self.spell_attack_penalty = 0
+        if self.spell_evasion_bonus_duration > 0:
+            self.spell_evasion_bonus_duration -= 1
+            if self.spell_evasion_bonus_duration == 0:
+                self.spell_evasion_bonus = 0
+        if self.spell_evasion_penalty_duration > 0:
+            self.spell_evasion_penalty_duration -= 1
+            if self.spell_evasion_penalty_duration == 0:
+                self.spell_evasion_penalty = 0
+        if self.spell_soak_bonus_duration > 0:
+            self.spell_soak_bonus_duration -= 1
+            if self.spell_soak_bonus_duration == 0:
+                self.spell_soak_bonus = 0
         expired: List[StatusEffect] = []
         for status, remaining in list(self.status_durations.items()):
             new_val = remaining - 1
@@ -215,6 +234,10 @@ class CombatParticipant:
                 self.status_durations[status] = new_val
         for status in expired:
             self.status_effects.discard(status)
+        # Dispatch turn-start feat hooks (First Strike 3 actions, etc.)
+        engine = getattr(self, 'engine', None)
+        if engine:
+            FEAT_REGISTRY.dispatch_on_turn_start(engine, self)
 
     def spend_actions(self, amount: int) -> bool:
         if self.actions_remaining < amount:

@@ -1,13 +1,335 @@
+================================================================================
+  AVASIM - DEVELOPMENT PLAN & NEXT STEPS
+  Last updated: 2025-02-09
+================================================================================
 
-Here are high‑impact next steps to make it feel more impressive (besides finishing magic):
+What is Built (current state)
+-----------------------------
+[x] Core combat engine (~1,800 lines) - full attack resolution, contested
+    evasion, graze, armor soak, critical hits, death saves, spell saves,
+    AOE spells, overcast consequences
+[x] 21 weapon classes with Avalore-accurate stats, requirements, and traits
+    (audited against rules doc - all correct)
+[x] 3 armor types + 2 shield types with soak / block mechanics
+    (fixed: medium armor 1d4-1, heavy armor 1d4 per rules)
+[x] 52 feats defined in data; ALL have engine implementations
+    (Dual Striker, Volley, Bastion Stance, Hamstring, Quickdraw, Galestorm,
+     Fanning Blade, Trick Shot, Two Birds One Stone, Piercing Strike,
+     Hilt Strike, Rangers Gambit, Momentum, Feint, Whirling Devil,
+     Riposte, Shield Bash, Rousing/Commanding Inspiration, Second Wind,
+     Lacuna, Harmonized Arsenal, First Strike, Skirmishing Party,
+     LW: Elemental, LW: Flexible Design, LW: Mastery, etc.)
+[x] Full spellcasting system - 20 spells across 6 disciplines (Force,
+    Ichor, Cursesmithy, Ether, Artifice, Tellurgy); spell saves, AOE,
+    status effects, damage types, overcast consequence table
+[x] 10x10 tactical map with terrain (wall, forest, water, elevation),
+    occupant tracking, pathfinding-aware movement, dash, vault
+[x] PySide6 desktop GUI - combatant editor, equipment/feat picker, 3 sim
+    modes, scenario presets, save/load, day/night toggle
+[x] Visual tile map (TacticalMapWidget via QGraphicsView) with overlays,
+    legend, click/hover interaction
+[x] Action replay slider with per-action snapshots
+[x] Decision-math drawer (AI transparency toggle)
+[x] Initiative display + turn tracker in UI
+[x] HP/Armor progress bars, status badges panel
+[x] Log collapsing + colorized action log
+[x] Export: HTML + CSV log export
+[x] Scenario editor dialog (place units/terrain, save/load JSON)
+[x] Unit tests for combat mechanics and tactical map
 
-Visual map: Replace the ASCII/grid with a simple tile renderer (QGraphicsView) using colored tiles, occupant icons/initials, hover tooltips, and range/LOS overlays; add path preview arrows for moves.
-Action replay: Add per-action map snapshots and a “Replay” slider/button to step through turns, with colorized highlights for the acting unit and targets.
-Scenario builder: Let users place units/terrain on the grid, set day/night, and save/load encounters; add a few curated presets (duel, skirmish, siege).
-AI transparency: Add a “Show decision math” drawer that explains why an action was chosen (EV, range move, feat hook) and a toggle to turn it off.
-Initiative/surprise: Model an initiative list in the UI with a turn tracker; add an ambush/surprise toggle to apply Always Ready/Skirmishing Party bonuses.
-Packaging polish: Provide a one-click Windows build (PyInstaller spec with icon/version), and keep mac runnable via python3 pyside_app.py; add a Help > Check for Updates link (even if it opens the repo).
-Status chips: Add icons/colors for buffs/debuffs (poison, marked, prone, blocking/evading) and HP/armor bars under each character card.
-Logs: Colorize action log by outcome and collapse long runs; add “Export HTML/CSV log” menu.
-Input guardrails: Gray out invalid actions, show friendly toasts for errors, and confirm resets; autosave last setup and reload on start (already partially done).
-If you want, I can start with the visual tile renderer plus per-action snapshots/replay, then add the initiative tracker and ambush toggle.
+
+================================================================================
+  PHASE 1 - Rules Fidelity and Engine Completeness     [COMPLETED]
+================================================================================
+
+1.1  Finish remaining feat implementations
+     Status: ~20 feats are defined but have no engine action_ method yet.
+     Tasks:
+     - Aberration Slayer: apply +1 damage vs chosen creature_type in
+       perform_attack (check target tag)
+     - Backline Flanker: hook into perform_attack; if hidden and target
+       adjacent to ally, +1 dmg; on miss, set conceal penalty bypass flag
+     - Combat Acrobat: action_vault exists, verify it sets evade state
+     - Control: after polearm/greatsword/large-shield hit, trigger push
+       + wall-pin bonus
+     - Dueling Stance: modify evade graze path; if single one-hand sword,
+       allow Parry (weapon roll -1) to deflect; buff +1 dmg next turn
+     - Evasive Tactics: gate death-save triggers while critical
+     - Deaths Dance: one free action per turn without death save while
+       critical
+     - Forward Charge: after landing heavy weapon hit, Topple/Shove
+       cannot be evaded/blocked, +3 block free move
+     - Lineage Weapon tree (Elemental, Flexible Design, Mastery, Questing
+       Bane): defined in feats.py but have zero engine wiring
+     - Mighty Strike: knockback on qualifying weapon hits
+     - Patient Flow: flowing stance redirect logic
+     - Quickfooted: free 2-block movement after full evade (partially
+       done with evasion bonus; movement part missing)
+     - Rakish Combination: next-unarmed buff after landing unarmed
+     - Reactive Stance: free maneuver on unarmed evade
+     - Sentinel: polearm + shield combo, polearm retaliation on block
+     - Shield Wall: adjacency detection for +1 bonuses
+     - Shieldmaster: +3 block bonus vs specific weapon types
+     - Skirmishing Party: pre-combat stealth/initiative buff (hook only)
+     - Steadfast Defender: opportunity attack on enemy enter/exit range
+     - Strategic Archer: elevation +1 damage check
+     - Vicious Mockery: debuff action (-1 stacking to -3)
+     - Harmonized Arsenal: action_throw_small_blade exists, verify +1 aim
+
+1.2  Expand the spellcasting system
+     Status: Only 3 spells exist; overcasting consequence table is stubbed.
+     Tasks:
+     - Add spells for all 6 disciplines (Ichor, Cursesmithy, Ether,
+       Artifice, Force, Tellurgy) - at least 3 per discipline
+     - Implement the overcast consequence table (roll 1d6, apply effects
+       from mild to severe)
+     - Add miscast penalty application (half Anima lost, no effect)
+     - Implement spell save/resistance rolls for targeted spells
+       (target rolls STR:Fortitude or DEX:Acrobatics vs spell DC)
+     - Support spell damage types (fire, ice, lightning, acid, force,
+       psychic) and future resistance/vulnerability hooks
+     - Wire spellcasting into AI decision-making so computer-controlled
+       mages actually use spells
+     - Add UI spell picker: spell list per combatant, Anima display,
+       cast button
+
+1.3  Weapon stat corrections
+     Status: items.py weapon stats partially diverge from the authoritative
+     rules in avalore_rules_feats_and_items.txt.
+     Tasks:
+     - Audit every weapon against the rules doc and fix damage, accuracy,
+       actions_required, traits (piercing, bypass-graze, etc.)
+     - Notable corrections needed:
+       * Arming Sword: rules say +1 to hit, 4 dmg - verify match
+       * Polearm: rules say +2 to hit, 6 dmg, pierces armor - verify
+       * Mace: rules say +1 to hit, 3 dmg, +2 vs medium/heavy armor
+       * Staff: rules say +2 to hit, 5 dmg, 2 actions, bypasses graze
+       * Small Weapon: rules say +3 to hit, 3 dmg
+       * Finesse Blade: rules say +3 to hit, 3 dmg, +1 vs unarmored,
+         bypasses graze
+       * Whip: rules say +3 to hit, 3 dmg, +1 vs unarmored, bypasses
+         graze, 0 dmg vs heavy armor
+       * Meteor Hammer: rules say +2 to hit, 3 dmg, +1 vs medium/heavy
+       * Recurve Bow: rules say +2 to hit, 3 dmg, 1 action, bypasses
+         graze, +1 vs unarmored
+       * Crossbow: rules say +3 to hit, 5 dmg, 2 actions, pierces armor
+       * Longbow: rules say +3 to hit, 6 dmg, 2 actions
+       * Spellbook: rules say +3 to hit, 4 dmg, 2 actions, pierces armor
+     - Add weapon traits: bypasses_graze, bonus_vs_unarmored,
+       bonus_vs_medium_heavy, zero_vs_heavy, hidden_on_miss
+
+1.4  Armor stat corrections
+     Status: The rules doc shows different soak formulas than what may
+     be implemented.
+     Tasks:
+     - Light armor: 1d2-1 (0 or 1) - verify
+     - Medium armor: 1d4-1 (0 to 3) - rules doc says 1d4-1, current
+       code may use 1d3-1; reconcile
+     - Heavy armor: 1d4 (1 to 4) - rules doc says 1d4, current code
+       may use 1d3; reconcile
+     - Ensure stat requirements are enforced in character creation UI
+       and produce warnings
+
+
+================================================================================
+  PHASE 2 - AI and Simulation Depth                    (HIGH PRIORITY)
+================================================================================
+
+2.1  Extract AI into its own module
+     Status: AI logic is currently embedded in the MainWindow class at
+     the bottom of pyside_app.py (~400+ lines of decision code). It is
+     not reusable, testable, or importable independently.
+     Tasks:
+     - Create combat/ai.py with a CombatAI class
+     - Move all decision logic (_choose_action, _plan_turn, _choose_stance,
+       EV calculations, reachable tiles, range management) into it
+     - Give CombatAI a clean interface: decide_turn(engine, participant)
+       returning a list of actions
+     - Support pluggable AI strategies (aggressive, defensive, balanced,
+       random) via subclass or config
+     - Add unit tests for AI decision-making
+
+2.2  Multi-combatant support
+     Status: The UI is hard-coded for exactly 2 combatants (Character 1
+     vs Character 2). The engine already accepts a list of participants.
+     Tasks:
+     - Extend the UI to allow 3+ combatants (add/remove combatant buttons)
+     - Support team/faction assignment (e.g., Team A vs Team B)
+     - Update initiative display for N participants
+     - Update AI target selection for multi-target environments
+     - Add preset scenarios with 3+ combatants (e.g., 2v2 skirmish,
+       1v3 ambush, free-for-all)
+
+2.3  Batch simulation / statistics mode
+     Tasks:
+     - Run N simulations button that runs 100-10,000 combats with the
+       same setup and collects win rates, average rounds, damage dealt
+     - Display results as a simple bar chart or table (matplotlib or
+       QChart)
+     - Allow comparing two loadouts side-by-side (What if Character 1
+       swaps to a Polearm? How does win rate change?)
+
+
+================================================================================
+  PHASE 3 - UI Polish and User Experience              (MEDIUM PRIORITY)
+================================================================================
+
+3.1  Improved map interaction
+     Tasks:
+     - Hover tooltips on tiles showing occupant name, HP, statuses,
+       terrain type
+     - Click-to-select a unit on the map, highlighting valid move tiles
+       in green and attack range in red
+     - Path preview arrows showing planned movement before confirming
+     - Animate movement and attacks (brief flash/pulse on attack,
+       smooth tile-to-tile transition)
+     - Larger map support (up to 20x20) with scroll/zoom
+
+3.2  Character card overhaul
+     Tasks:
+     - Show each combatant as a compact card with: name, HP bar, Anima
+       bar, equipped weapon icon, armor icon, active status effects as
+       colored chips/badges
+     - Status chips for: Prone, Crippled, Poisoned, Blocking, Evading,
+       Bastion, Flowing Stance, Marked, Hidden, Vulnerable, Inspired
+     - Weapon swap indicator (is weapon lifted/loaded?)
+     - Death save indicator (skull icon when critical)
+
+3.3  Input guardrails and validation
+     Tasks:
+     - Gray out / disable invalid action buttons based on current state
+       (e.g., cannot Block without a shield, cannot Volley without a bow)
+     - Show friendly toast notifications for errors instead of silent
+       failures
+     - Confirmation dialog before resetting combat
+     - Warn when equipment does not meet stat requirements
+     - Auto-save last setup to a local JSON; reload on app launch
+
+3.4  Dark / Light theme toggle
+     Status: Theme system exists in ui/theme.py. Need a user-facing toggle.
+     Tasks:
+     - Add View > Toggle Theme menu item
+     - Persist theme choice in settings.json
+     - Ensure all widgets respond correctly to theme switch
+
+3.5  Help and onboarding
+     Tasks:
+     - Add a Help > Quick Start dialog explaining the 3 simulation modes
+     - Add weapon/armor/feat reference tooltips (hover over any feat name
+       to see description + prerequisites)
+     - Add info button next to each feat checkbox
+
+
+================================================================================
+  PHASE 4 - Scenario and Content                       (MEDIUM PRIORITY)
+================================================================================
+
+4.1  Curated preset scenarios
+     Tasks:
+     - Duel: 1v1 arena, flat terrain, pre-built melee characters
+     - Skirmish: 2v2 with forest/cover, mixed melee + ranged
+     - Siege: 1v3, defender has elevation + heavy armor, attackers
+       have ranged + mobility feats
+     - Mage Duel: 1v1, both characters are casters with full spell lists
+     - Ambush: surprise round scenario, demonstrates Always Ready /
+       Skirmishing Party / First Strike
+
+4.2  Scenario builder improvements
+     Tasks:
+     - Terrain palette: click a terrain type, then paint it on the map
+     - Unit palette: click a preset character, then place on map
+     - Resize grid (5x5 to 20x20)
+     - Name / description field for custom scenarios
+     - Import/export scenarios as shareable JSON files
+     - Elevation editing (set tile height for Strategic Archer, etc.)
+
+4.3  Character templates / presets
+     Tasks:
+     - Pre-built character archetypes: Swordsman, Archer, Tank, Mage,
+       Rogue, Brawler, Paladin
+     - Each archetype has sensible stats, skills, equipment, and feats
+     - Randomize button for quick character generation
+     - Allow saving custom characters as reusable templates
+
+
+================================================================================
+  PHASE 5 - Testing and Quality                        (ONGOING)
+================================================================================
+
+5.1  Expand test coverage
+     Tasks:
+     - Add tests for every implemented feat (currently only a subset)
+     - Add tests for spellcasting: successful cast, miscast, overcast
+     - Add tests for edge cases: 0 HP + death save, block + riposte
+       chain, dual striker vs shield bash, stacking debuffs
+     - Add integration test: full combat from init to victory, verifying
+       log output
+     - Target: 80%+ code coverage on combat/ module
+
+5.2  Rules validation suite
+     Tasks:
+     - Create a test file that encodes specific rule interactions from
+       the Avalore docs and asserts the engine handles them correctly
+     - Example: Heavy armor blocks ranged weapons -> test that a longbow
+       cannot be equipped with heavy armor
+     - Example: Graze with finesse blade still deals full damage -> test
+       that bypass_graze works
+     - Example: Large shield negates AP -> test AP immunity on block
+
+5.3  Cleanup deprecated files
+     Status: STRUCTURE.md mentions deprecated root-level ui_*.py files
+     that are superseded by the ui/ module.
+     Tasks:
+     - Verify ui_theme.py, ui_animations.py, ui_components.py,
+       ui_map_widget.py no longer exist or remove them if they do
+     - Remove duplicate csv import in pyside_app.py (line 8/9)
+     - Clean up any dead code or unused imports
+
+
+================================================================================
+  PHASE 6 - Packaging and Distribution                 (LOW PRIORITY)
+================================================================================
+
+6.1  Cross-platform builds
+     Tasks:
+     - Update avasim.spec (PyInstaller) for Windows one-click build with
+       icon and version metadata
+     - Test macOS build via python3 pyside_app.py (already works)
+     - Create a GitHub Actions workflow for CI: run tests on push,
+       build artifacts for Windows + macOS on release tag
+     - Add a make or just file for common dev tasks (test, build, run)
+
+6.2  Version and updates
+     Tasks:
+     - Read version from packaging/version.txt at runtime; display in
+       title bar and Help > About
+     - Add Help > Check for Updates that opens the GitHub releases page
+     - Add a CHANGELOG.md to track releases
+
+
+================================================================================
+  SUGGESTED EXECUTION ORDER
+================================================================================
+
+  Immediate (next 1-2 sessions):
+    1. Weapon/armor stat audit (1.3, 1.4) - quick win, high fidelity impact
+    2. Extract AI to combat/ai.py (2.1) - unblocks testability and future work
+    3. Finish top 5 missing feat implementations (1.1) - pick the feats
+       most used by preset characters
+
+  Short-term (next 2-4 sessions):
+    4. Expand spellcasting (1.2) - at least 12 spells across disciplines
+    5. Multi-combatant UI (2.2) - enables richer scenarios
+    6. Input guardrails + autosave (3.3) - low effort, high UX impact
+    7. Character templates (4.3) - makes the app immediately playable
+
+  Medium-term:
+    8. Batch simulation mode (2.3)
+    9. Map interaction improvements (3.1)
+    10. Curated scenario presets (4.1)
+    11. Expanded test suite (5.1, 5.2)
+
+  When ready to ship:
+    12. Packaging and CI (6.1, 6.2)
+    13. Help / onboarding (3.5)
+    14. Theme toggle persistence (3.4)

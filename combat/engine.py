@@ -3,9 +3,10 @@ from .participant import CombatParticipant
 from .map import TacticalMap
 from .items import Weapon, Armor, Shield, AVALORE_WEAPONS
 from .feats import Feat
-from .spells import Spell
+from .spells import Spell, SpellEffect
 from .enums import RangeCategory, ShieldType, ArmorCategory, StatusEffect, TerrainType
 from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6
+from .feat_handlers import FEAT_REGISTRY, FeatRegistry
 
 class AvaCombatEngine:
     def __init__(self, participants: List[CombatParticipant], tactical_map: Optional[TacticalMap] = None):
@@ -22,6 +23,7 @@ class AvaCombatEngine:
         self.environment_darkness: bool = False
         self.time_of_day: str = "day"
         self.tactical_map = tactical_map
+        self.feat_registry: FeatRegistry = FEAT_REGISTRY
         if self.tactical_map:
             for p in participants:
                 x, y = p.position
@@ -214,116 +216,151 @@ class AvaCombatEngine:
         if weapon is None:
             weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
         allow_death_save = True if allow_death_save_override is None else allow_death_save_override
-        # Validate can act
+        miss_result = {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+
+        # --- Validation phase ---
         if not self._ensure_can_act(attacker):
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
-        # Check weapon requirements
+            return miss_result
         if not attacker.can_use_weapon(weapon):
             self.log(f"{attacker.character.name} does not meet requirements for {weapon.name}!")
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
-        # Check armor prohibitions (heavy armor + bows)
+            return miss_result
         if attacker.armor and attacker.armor.prohibits_weapon(weapon):
             self.log(f"{attacker.armor.name} prevents using {weapon.name}!")
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            return miss_result
         if getattr(attacker, "sentinel_needs_lift", False) and weapon.name in {"Spear", "Polearm", "Javelin"}:
             if attacker.actions_remaining < 1:
                 self.log(f"{attacker.character.name} needs 1 action to ready {weapon.name} after Sentinel and lacks the actions.")
-                return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+                return miss_result
             attacker.actions_remaining -= 1
             attacker.sentinel_needs_lift = False
             self.log(f"{attacker.character.name} spends 1 action to re-lift {weapon.name} after Sentinel.")
         attacker.last_hit_success = False
         if not self._ensure_weapon_ready(attacker, weapon):
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            return miss_result
         if getattr(self, "environment_underwater", False) and not weapon.usable_underwater:
             self.log(f"{weapon.name} cannot be used underwater.")
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            return miss_result
         if self.tactical_map and not self.is_in_range(attacker, defender, weapon):
             distance = self.get_distance(attacker, defender)
             self.log(f"{attacker.character.name} cannot attack - target is {distance} blocks away, weapon {weapon.name} requires {weapon.range_category.name} range!")
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            return miss_result
+
+        # --- Cover check ---
         cover = "none"
         if self.tactical_map:
             attacker_pos = attacker.position
             defender_pos = defender.position
             if not self.tactical_map.has_line_of_sight(attacker_pos, defender_pos):
                 self.log(f"{attacker.character.name} has no line of sight to {defender.character.name}.")
-                return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+                return miss_result
             cover = self.tactical_map.cover_between(attacker_pos, defender_pos)
-        dueling_bonus = 0
-        if attacker.has_feat("Dueling Stance"):
-            if weapon and not weapon.is_two_handed and attacker.weapon_offhand is None and attacker.shield is None:
-                dueling_bonus = 1
-        lineage_aim_bonus = 0
-        attack_element: Optional[str] = None
-        if attacker.has_feat("Lineage Weapon") and (attacker.lineage_weapon or attacker.lineage_weapon_alt):
-            if weapon and (weapon.name == attacker.lineage_weapon or weapon.name == attacker.lineage_weapon_alt):
-                lineage_aim_bonus = 1
-                if attacker.has_feat("LW: Questing Bane") and defender and hasattr(defender, "creature_type"):
-                    if defender.creature_type in attacker.slain_species:
-                        lineage_aim_bonus = 2
-                if attacker.active_lineage_element:
-                    attack_element = attacker.active_lineage_element
+
+        # --- Build attack context for handler hooks ---
+        attack_ctx: Dict[str, Any] = {
+            "accuracy_modifier": accuracy_modifier,
+            "ignore_quickfooted": ignore_quickfooted,
+            "ignore_shieldmaster": ignore_shieldmaster,
+            "bypass_graze": bypass_graze,
+            "force_non_ap": force_non_ap,
+            "half_damage": half_damage,
+            "suppress_reactions": suppress_reactions,
+            "cover": cover,
+            "attack_element": None,
+        }
+
+        # --- Consume actions ---
         if consume_actions and not attacker.consume_action(weapon.actions_required, action_name=f"attack with {weapon.name}"):
             self.log(f"{attacker.character.name} lacks actions to attack with {weapon.name}.")
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+            return miss_result
+
         self.log(f"\n{attacker.character.name} attacks {defender.character.name} with {weapon.name}")
+
+        # --- Rakish Combination aim bonus (from previous unarmed hit) ---
         rakish_aim_bonus = 0
         if weapon.name == "Unarmed" and attacker.next_unarmed_bonus == "aim":
             rakish_aim_bonus = 1
+
+        # --- Roll attack ---
         attack_roll, dice = roll_2d10()
         is_crit = (dice[0] == 10 and dice[1] == 10)
-        
-        # Apply weapon requirement penalty if not met
         requirement_penalty = attacker.get_weapon_penalty(weapon)
-        
-        total_attack = attack_roll + weapon.accuracy_bonus + accuracy_modifier + dueling_bonus + rakish_aim_bonus + lineage_aim_bonus + requirement_penalty
+
+        total_attack = attack_roll + weapon.accuracy_bonus + accuracy_modifier + rakish_aim_bonus + requirement_penalty
         total_attack += getattr(attacker, "temp_attack_bonus", 0)
         total_attack -= getattr(attacker, "mockery_penalty_total", 0)
-        if defender.has_status(StatusEffect.HIDDEN) and not attacker.has_feat("Precise Senses"):
-            total_attack -= 3
-        if getattr(self, "environment_darkness", False) and not attacker.has_feat("Precise Senses"):
-            total_attack -= 2
+
+        # Environment/status penalties (applied before handler hooks can negate them)
+        hidden_penalty = 0
+        darkness_penalty = 0
+        if defender.has_status(StatusEffect.HIDDEN):
+            hidden_penalty = 3
+        if getattr(self, "environment_darkness", False):
+            darkness_penalty = 2
+        # Precise Senses negates these penalties
+        if attacker.has_feat("Precise Senses"):
+            hidden_penalty = 0
+            darkness_penalty = 0
+        total_attack -= hidden_penalty
+        total_attack -= darkness_penalty
+
+        # --- Dispatch attacker feat hooks to modify attack roll ---
+        total_attack = self.feat_registry.dispatch_modify_attack_roll(
+            self, attacker, defender, weapon, total_attack, attack_ctx)
+
         weapon_ap = weapon.is_piercing()
         if force_non_ap:
             weapon_ap = False
+        attack_ctx["is_ap"] = weapon_ap
+
         if weapon.load_time > 0:
             attacker.loaded_weapon = None
         if weapon.draw_time > 0:
             attacker.drawn_weapon = None
-        if defender.has_feat("Parry") and defender.can_use_limited("Parry"):
-            total_attack -= 2
-            self.log(f"{defender.character.name} parries, reducing attack by 2 (now {total_attack}).")
+
+        # --- Dispatch defender feat hooks to modify attack roll ---
+        total_attack = self.feat_registry.dispatch_modify_defense_roll(
+            self, attacker, defender, weapon, total_attack, attack_ctx)
+
+        # Cover penalty
         if cover != "none":
             cover_penalty = defender.cover_bonus(cover)
             total_attack -= cover_penalty
             self.log(f"Cover ({cover}) imposes -{cover_penalty} to attack. Adjusted total: {total_attack}")
+
+        dueling_bonus = attack_ctx.get("dueling_bonus", 0)
+        lineage_aim_bonus = attack_ctx.get("lineage_aim_bonus", 0)
+        attack_element = attack_ctx.get("attack_element")
+
         self.log(f"Attack roll: {dice} = {attack_roll} + {weapon.accuracy_bonus} (weapon) + {accuracy_modifier + dueling_bonus + lineage_aim_bonus + rakish_aim_bonus} (modifier) = {total_attack}")
+
+        # --- Critical hit ---
         if is_crit:
             self.log("CRITICAL HIT!")
             damage = weapon.damage + (2 if weapon_ap else 0)
             actual_damage = defender.take_damage(damage, armor_piercing=True, allow_death_save=allow_death_save)
             self.log(f"Critical deals {damage} AP damage! Defender takes {actual_damage} damage.")
             attacker.last_hit_success = True
-            if attacker.has_feat("LW: Questing Bane") and defender.is_dead and hasattr(defender, "creature_type"):
-                attacker.slain_species.add(defender.creature_type)
+            crit_result = {"hit": True, "damage": actual_damage, "is_crit": True, "is_graze": False, "blocked": False, "element": attack_element}
+            self.feat_registry.dispatch_on_hit(self, attacker, defender, weapon, crit_result)
             self._capture_snapshot(f"Crit: {attacker.character.name}", attacker, defender)
-            return {"hit": True, "damage": actual_damage, "is_crit": True, "is_graze": False, "blocked": False, "element": attack_element}
+            return crit_result
+
+        # --- Evasion resolution ---
         if defender.is_evading:
             evasion_roll, evasion_dice = roll_2d10()
             qf_bonus = 0 if ignore_quickfooted else defender.get_quickfooted_bonus(weapon, defender.shield)
             evasion_mod = defender.get_evasion_modifier() + qf_bonus
             total_evasion = evasion_roll + evasion_mod
             self.log(f"{defender.character.name} evades: {evasion_dice} = {evasion_roll} + {evasion_mod} (evasion mod) = {total_evasion}")
+
             if total_evasion >= total_attack:
+                # Full evasion
                 self.log(f"{defender.character.name} fully evades the attack!")
-                d_wep = defender.weapon_main or defender.weapon_offhand
-                if d_wep and defender.has_feat("Galestorm Stance") and d_wep.name in {"Greatsword", "Polearm", "Staff"}:
-                    defender.evades_since_last_turn = getattr(defender, "evades_since_last_turn", 0) + 1
-                if defender.has_feat("Quickfooted"):
-                    self.apply_knockback(defender, 2, source_pos=attacker.position, source_name=defender.character.name)
-                if defender.has_feat("Reactive Stance"):
-                    self._reactive_maneuver(defender, attacker)
+
+                # Dispatch evade hooks (Galestorm, Quickfooted, Reactive Stance, etc.)
+                self.feat_registry.dispatch_on_evade_success(self, defender, attacker, weapon)
+
+                # Patient Flow redirect (complex, stays in engine)
                 if defender.flowing_stance and weapon.range_category in {RangeCategory.MELEE, RangeCategory.SKIRMISHING}:
                     alt_targets = [p for p in self.participants if p is not defender and p is not attacker and p.current_hp > 0]
                     if self.tactical_map:
@@ -337,34 +374,24 @@ class AvaCombatEngine:
                             self.perform_attack(attacker, alt, weapon=weapon, consume_actions=False, suppress_reactions=True)
                             self._capture_snapshot(f"Redirected: {attacker.character.name}", attacker, defender)
                             return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+
                 if not suppress_reactions and not getattr(defender, "reactive_maneuver_used", False):
                     self.maybe_riposte(defender, attacker)
                 self._capture_snapshot(f"Evaded: {attacker.character.name}", attacker, defender)
                 return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+
             elif total_evasion >= 12:
+                # Grazing hit
                 self.log(f"Grazing hit! Attack partially connects.")
-                can_parry = False
-                parry_weapon = defender.weapon_main
-                if defender.has_feat("Dueling Stance") and parry_weapon and not parry_weapon.is_two_handed and defender.weapon_offhand is None and defender.shield is None:
-                    if parry_weapon.name in {"Dagger", "Rapier", "Arming Sword"}:
-                        in_range = True
-                        if self.tactical_map:
-                            dist = self.tactical_map.manhattan_distance(defender.position[0], defender.position[1], attacker.position[0], attacker.position[1])
-                            in_range = dist <= 1
-                        can_parry = in_range
-                if can_parry:
-                    parry_roll, pr_dice = roll_2d10()
-                    is_parry_crit = (pr_dice[0] == 10 and pr_dice[1] == 10)
-                    parry_total = parry_roll + parry_weapon.accuracy_bonus - 1
-                    self.log(f"{defender.character.name} attempts a Parry! Roll {pr_dice} -> {parry_total}")
-                    if parry_total >= 12 or is_parry_crit:
-                        defender.parry_bonus_next_turn = True
-                        self.log(f"Parry successful! Grazing hit deflected. {defender.character.name} gains +1 damage on next turn while single-wielding.")
-                        self._capture_snapshot(f"Parry: {attacker.character.name}", attacker, defender)
-                        return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
-                if defender.has_feat("Evasive Tactics") and defender.is_critical and not defender.graze_buffer_used:
-                    defender.suppress_death_save_once = True
-                    defender.graze_buffer_used = True
+
+                graze_ctx: Dict[str, Any] = {"parry_deflected": False}
+                # Dispatch graze hooks (Dueling Stance parry, Evasive Tactics buffer)
+                self.feat_registry.dispatch_on_graze(self, attacker, defender, weapon, graze_ctx)
+
+                if graze_ctx.get("parry_deflected"):
+                    self._capture_snapshot(f"Parry: {attacker.character.name}", attacker, defender)
+                    return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+
                 if bypass_graze or ("grazing" in weapon.traits):
                     damage = weapon.damage
                     self.log(f"Weapon trait overrides graze reduction. Full damage applies.")
@@ -374,34 +401,30 @@ class AvaCombatEngine:
                 else:
                     damage = (weapon.damage + 1) // 2
                     self.log(f"Light armor allows partial dodge. Damage halved to {damage}.")
+
                 actual_damage = defender.take_damage(damage, armor_piercing=weapon_ap, allow_death_save=allow_death_save)
                 self.log(f"Defender takes {actual_damage} damage after armor.")
                 attacker.last_hit_success = True
-                if attacker.has_feat("LW: Questing Bane") and defender.is_dead and hasattr(defender, "creature_type"):
-                    attacker.slain_species.add(defender.creature_type)
-                if weapon.name == "Unarmed" and attacker.has_feat("Rakish Combination"):
-                    str_ath = attacker.character.get_modifier("Strength", "Athletics")
-                    base_unarmed = 2 + (3 if str_ath >= 5 else 2 if str_ath >= 3 else 1 if str_ath >= 1 else 0)
-                    attacker.next_unarmed_bonus = "aim" if base_unarmed >= 4 else "damage"
+                graze_result = {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": True, "blocked": False, "element": attack_element}
+                self.feat_registry.dispatch_on_hit(self, attacker, defender, weapon, graze_result)
                 self._capture_snapshot(f"Graze: {attacker.character.name}", attacker, defender)
-                return {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": True, "blocked": False, "element": attack_element}
+                return graze_result
             else:
                 self.log(f"Evasion failed (below 12). Attack proceeds normally.")
+
+        # --- Block resolution ---
         if defender.is_blocking and defender.shield:
             is_ranged = weapon.range_category == RangeCategory.RANGED
             extra_block_bonus = 0
-            if defender.has_feat("Shieldmaster") and not ignore_shieldmaster:
-                melee_bonus_weapons = {
-                    "Unarmed", "Arming Sword", "Dagger", "Rapier", "Mace", "Spear", "Polearm",
-                    "Whip", "Meteor Hammer", "Throwing Knife", "Staff", "Recurve Bow"
-                }
-                if weapon.name in melee_bonus_weapons:
-                    extra_block_bonus += 3
-                if is_ranged:
-                    extra_block_bonus += 1
-            if is_ranged and self._has_shield_wall(defender):
-                extra_block_bonus += 1
-            block_roll, block_success = defender.shield.roll_block(is_ranged_attack=is_ranged, extra_bonus=extra_block_bonus - getattr(defender, "mockery_penalty_total", 0))
+
+            # Dispatch block bonus hooks (Shieldmaster, Shield Wall)
+            block_ctx: Dict[str, Any] = {"ignore_shieldmaster": ignore_shieldmaster}
+            extra_block_bonus = self.feat_registry.dispatch_modify_block(
+                self, defender, weapon, extra_block_bonus, block_ctx)
+
+            block_roll, block_success = defender.shield.roll_block(
+                is_ranged_attack=is_ranged,
+                extra_bonus=extra_block_bonus - getattr(defender, "mockery_penalty_total", 0))
             self.log(f"{defender.character.name} attempts block: {block_roll} vs DC 12")
             if block_success:
                 self.log(f"{defender.character.name} blocks the attack with their shield!")
@@ -411,15 +434,18 @@ class AvaCombatEngine:
                 return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": True, "element": attack_element}
             else:
                 self.log(f"Block failed. Attack proceeds.")
+
+        # --- Miss ---
         if total_attack < 12:
             self.log(f"Attack misses (total {total_attack} < 12)")
-            if attacker.has_feat("Backline Flanker") and attacker.has_status(StatusEffect.HIDDEN):
-                attacker.ignore_next_conceal_penalty = True
-                self.log(f"Backline Flanker: next Conceal ignores -3 penalty.")
+            miss_res = {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+            self.feat_registry.dispatch_on_miss(self, attacker, defender, weapon, miss_res)
             if attacker.parry_damage_bonus_active:
                 attacker.parry_damage_bonus_active = False
             self._capture_snapshot(f"Miss: {attacker.character.name}", attacker, defender)
-            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+            return miss_res
+
+        # --- Hit! ---
         self.log(f"Attack hits!")
         if defender.has_status(StatusEffect.VULNERABLE) and weapon.range_category == RangeCategory.MELEE:
             self.log(f"Target is vulnerable to melee: +1 aim applied.")
@@ -428,17 +454,19 @@ class AvaCombatEngine:
             if effective_ap:
                 self.log(f"Large shield negates armor piercing!")
                 effective_ap = False
-        base_damage = weapon.damage + dueling_bonus
+
+        # --- Calculate damage ---
+        base_damage = weapon.damage
+        # Dueling Stance +1 damage handled by handler
+        # Parry bonus damage
         parry_bonus_consumed = False
         if attacker.parry_damage_bonus_active and weapon and not weapon.is_two_handed and attacker.weapon_offhand is None and attacker.shield is None and weapon.name in {"Dagger", "Rapier", "Arming Sword"}:
             base_damage += 1
             parry_bonus_consumed = True
         if half_damage:
             base_damage = (base_damage + 1) // 2
-        if attacker.has_feat("Aberration Slayer") and defender and hasattr(defender, "creature_type"):
-            chosen = getattr(attacker, "aberration_slayer_type", None)
-            if chosen and defender.creature_type == chosen:
-                base_damage += 1
+
+        # Unarmed damage scaling (core mechanic, not feat)
         if weapon.name == "Unarmed":
             str_athletics = attacker.character.get_modifier("Strength", "Athletics")
             if str_athletics >= 5:
@@ -447,6 +475,8 @@ class AvaCombatEngine:
                 base_damage += 2
             elif str_athletics >= 1:
                 base_damage += 1
+
+        # Weapon trait bonuses
         if "vs_unarmored_bonus" in weapon.traits:
             if not defender.armor or defender.armor.category == ArmorCategory.NONE:
                 base_damage += 1
@@ -459,63 +489,32 @@ class AvaCombatEngine:
             if defender.armor and defender.armor.category == ArmorCategory.HEAVY:
                 base_damage = 0
                 self.log(f"Whip cannot penetrate heavy armor - no damage!")
-        if attacker.has_feat("Control") and id(defender) in getattr(attacker, "control_wall_bonus_targets", set()):
-            base_damage += 1
-            self.log("Control: wall pressure grants +1 damage.")
+
+        # Rakish Combination flat damage
         if weapon.name == "Unarmed" and attacker.next_unarmed_bonus == "damage":
             base_damage = 4
+
+        # --- Dispatch damage modifier hooks (Dueling Stance, Control wall, Aberration Slayer, etc.) ---
+        damage_ctx: Dict[str, Any] = {"is_ap": effective_ap}
+        base_damage = self.feat_registry.dispatch_modify_damage(
+            self, attacker, defender, weapon, base_damage, damage_ctx)
+
         actual_damage = defender.take_damage(base_damage, armor_piercing=effective_ap, allow_death_save=allow_death_save)
         self.log(f"Weapon deals {base_damage} damage. Defender takes {actual_damage} after armor.")
+
         if parry_bonus_consumed:
             attacker.parry_damage_bonus_active = False
         if weapon.name == "Unarmed" and attacker.next_unarmed_bonus:
             attacker.next_unarmed_bonus = None
-        if weapon.name == "Unarmed" and attacker.has_feat("Rakish Combination") and actual_damage > 0:
-            str_ath = attacker.character.get_modifier("Strength", "Athletics")
-            base_unarmed = 2 + (3 if str_ath >= 5 else 2 if str_ath >= 3 else 1 if str_ath >= 1 else 0)
-            attacker.next_unarmed_bonus = "aim" if base_unarmed >= 4 else "damage"
-        if self.tactical_map and attacker.has_feat("Strategic Archer") and weapon.range_category == RangeCategory.RANGED:
-            ax, ay = attacker.position
-            dx, dy = defender.position
-            atile = self.tactical_map.get_tile(ax, ay)
-            dtile = self.tactical_map.get_tile(dx, dy)
-            if atile and dtile and (atile.height - dtile.height) >= 3:
-                bonus = defender.take_damage(1, armor_piercing=effective_ap, allow_death_save=allow_death_save)
-                actual_damage += bonus
-                self.log(f"Strategic Archer: high ground bonus +1 damage applied.")
-        if attacker.has_feat("Control"):
-            control_weapons = {"Spear", "Polearm", "Greatsword", "Large Shield"}
-            if weapon.name in control_weapons:
-                wall_blocked = self._apply_control_push(attacker, defender, 4)
-                if wall_blocked:
-                    attacker.control_wall_bonus_targets.add(id(defender))
-                    self.log("Control: target is pinned against a wall; +1 damage on subsequent attacks this turn.")
-        if attacker.has_feat("Backline Flanker") and attacker.has_status(StatusEffect.HIDDEN) and self.tactical_map:
-            dx, dy = defender.position
-            ally_adjacent = False
-            for nx, ny in self.tactical_map.get_neighbors(dx, dy):
-                tile = self.tactical_map.get_tile(nx, ny)
-                if tile and isinstance(tile.occupant, CombatParticipant):
-                    other = tile.occupant
-                    if other is not attacker and other is not defender:
-                        ally_adjacent = True
-                        break
-            if ally_adjacent:
-                bonus = defender.take_damage(1, armor_piercing=effective_ap, allow_death_save=allow_death_save)
-                actual_damage += bonus
-                self.log(f"Backline Flanker: +1 damage applied for flanking from hidden.")
-        if attacker.has_feat("Mighty Strike"):
-            mighty_weapons = {
-                "Greatsword", "Greataxe", "Sling", "Staff", "Crossbow", "Mace", "Large Shield", "Unarmed"
-            }
-            if weapon.name in mighty_weapons:
-                self.apply_knockback(defender, 3, source_pos=attacker.position, source_name=attacker.character.name)
-        if attacker.has_feat("Forward Charge") and weapon.name in {"Greatsword", "Polearm", "Staff"}:
-            attacker.forward_charge_ready = True
-            self.log(f"Forward Charge primed: next Topple/Shove cannot be evaded or blocked.")
+
+        # --- Dispatch post-hit hooks (Rakish Combination, Control push, Mighty Strike, etc.) ---
+        hit_result = {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element, "is_ap": effective_ap}
+        self.feat_registry.dispatch_on_hit(self, attacker, defender, weapon, hit_result)
+
+        # Strategic Archer bonus (needs to add to actual_damage in result)
+        actual_damage = hit_result.get("damage", actual_damage)
+
         attacker.last_hit_success = True
-        if attacker.has_feat("LW: Questing Bane") and defender.is_dead and hasattr(defender, "creature_type"):
-            attacker.slain_species.add(defender.creature_type)
         self._capture_snapshot(f"Hit: {attacker.character.name}", attacker, defender)
         return {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
 
@@ -667,31 +666,173 @@ class AvaCombatEngine:
             caster.anima -= spell.anima_cost
             self.log(f"Anima: {caster.anima}/{caster.max_anima}")
         else:
-            consequence_roll = roll_1d6()
-            self.log(f"Overcast consequence roll: {consequence_roll}")
-            if consequence_roll <= 2:
-                self.log(f"Severe consequence! {caster.character.name} suffers permanent scarring or is knocked down.")
-            elif consequence_roll <= 4:
-                self.log(f"Moderate consequence! Fatigue or temporary debuff.")
-            else:
-                self.log(f"Mild consequence! Ringing ears or numb hands.")
-        result = {"success": True, "miscast": False, "overcast": is_overcast, "damage": 0, "healing": 0}
-        if spell.damage > 0 and target:
-            if spell.requires_attack_roll:
-                attack_result = self.perform_attack(caster, target, weapon=None)
-                if attack_result["hit"]:
-                    actual_damage = target.take_damage(spell.damage, armor_piercing=True)
-                    self.log(f"{spell.name} deals {spell.damage} damage to {target.character.name}!")
-                    result["damage"] = actual_damage
-            else:
-                actual_damage = target.take_damage(spell.damage, armor_piercing=True)
-                self.log(f"{spell.name} deals {spell.damage} damage to {target.character.name}!")
-                result["damage"] = actual_damage
-        if spell.healing > 0 and target:
-            target.heal(spell.healing)
-            self.log(f"{spell.name} heals {spell.healing} HP to {target.character.name}! (HP: {target.current_hp}/{target.max_hp})")
-            result["healing"] = spell.healing
+            self._apply_overcast_consequence(caster)
+        result = {"success": True, "miscast": False, "overcast": is_overcast, "damage": 0, "healing": 0, "targets_hit": []}
+
+        # --- Gather targets (single or AOE) ---
+        targets = []
+        if spell.aoe_radius > 0 and self.tactical_map and target:
+            cx, cy = target.position
+            for p in self.participants:
+                if p.is_dead:
+                    continue
+                px, py = p.position
+                dist = self.tactical_map.manhattan_distance(cx, cy, px, py)
+                if dist <= spell.aoe_radius:
+                    if spell.ally_target:
+                        if p is caster or self._is_ally(caster, p):
+                            targets.append(p)
+                    else:
+                        if p is not caster and not self._is_ally(caster, p):
+                            targets.append(p)
+        elif spell.self_target:
+            targets = [caster]
+        elif target:
+            targets = [target]
+
+        # --- Apply effects to each target ---
+        total_damage = 0
+        total_healing = 0
+        for t in targets:
+            saved = False
+            if spell.save_stat and spell.save_skill and t is not caster:
+                saved = self._roll_spell_save(t, spell)
+
+            # Damage
+            if spell.damage > 0 and not spell.ally_target:
+                dmg = spell.damage
+                if saved and spell.half_damage_on_save:
+                    dmg = (dmg + 1) // 2
+                    self.log(f"{t.character.name} resists partially! Damage halved to {dmg}.")
+                elif saved:
+                    dmg = 0
+                    self.log(f"{t.character.name} resists the spell entirely!")
+                if dmg > 0:
+                    actual_damage = t.take_damage(dmg, armor_piercing=True)
+                    self.log(f"{spell.name} deals {dmg} {spell.damage_type} damage to {t.character.name}! ({actual_damage} after armor)")
+                    total_damage += actual_damage
+                    result["targets_hit"].append(t.character.name)
+
+            # Healing
+            if spell.healing > 0 and (spell.ally_target or spell.self_target):
+                t.heal(spell.healing)
+                self.log(f"{spell.name} heals {spell.healing} HP to {t.character.name}! (HP: {t.current_hp}/{t.max_hp})")
+                total_healing += spell.healing
+
+            # Status effects (only apply if target didn't fully save)
+            if spell.effects and not saved:
+                self._apply_spell_effects(caster, t, spell)
+
+        # Self-heal from drain spells (e.g. Soul Drain)
+        if spell.healing > 0 and not spell.ally_target and not spell.self_target and target:
+            caster.heal(spell.healing)
+            self.log(f"{caster.character.name} drains {spell.healing} HP! (HP: {caster.current_hp}/{caster.max_hp})")
+            total_healing += spell.healing
+
+        result["damage"] = total_damage
+        result["healing"] = total_healing
         return result
+
+    def _roll_spell_save(self, target: CombatParticipant, spell: Spell) -> bool:
+        """Target rolls 2d10 + stat:skill vs spell's save_dc. Returns True if saved."""
+        save_roll, dice = roll_2d10()
+        save_mod = target.character.get_modifier(spell.save_stat, spell.save_skill)
+        save_total = save_roll + save_mod
+        self.log(f"{target.character.name} save ({spell.save_stat}:{spell.save_skill}): {dice} = {save_roll} + {save_mod} = {save_total} vs DC {spell.save_dc}")
+        return save_total >= spell.save_dc
+
+    def _apply_spell_effects(self, caster: CombatParticipant, target: CombatParticipant, spell: Spell):
+        """Apply spell secondary effects (status, push, pull, penalties)."""
+        for effect in spell.effects:
+            if effect.push_blocks > 0 and target is not caster:
+                self.apply_knockback(target, effect.push_blocks, source_pos=caster.position, source_name=spell.name)
+            if effect.pull_blocks > 0 and target is not caster:
+                self.apply_knockback(target, effect.pull_blocks, source_pos=target.position, source_name=spell.name)
+            if effect.status == "prone":
+                target.apply_status(StatusEffect.PRONE)
+                target.status_durations[StatusEffect.PRONE] = effect.duration_rounds
+                self.log(f"{target.character.name} is knocked prone by {spell.name}!")
+            elif effect.status == "slowed":
+                target.apply_status(StatusEffect.SLOWED)
+                target.status_durations[StatusEffect.SLOWED] = effect.duration_rounds
+                self.log(f"{target.character.name} is slowed by {spell.name}!")
+            elif effect.status == "vulnerable":
+                target.apply_status(StatusEffect.VULNERABLE)
+                target.status_durations[StatusEffect.VULNERABLE] = effect.duration_rounds
+                self.log(f"{target.character.name} is vulnerable from {spell.name}!")
+            elif effect.status == "hidden":
+                target.apply_status(StatusEffect.HIDDEN)
+                target.status_durations[StatusEffect.HIDDEN] = effect.duration_rounds
+                self.log(f"{target.character.name} is hidden by {spell.name}!")
+            elif effect.status == "temp_hp":
+                amount = abs(effect.penalty_value)
+                target.temp_hp = max(target.temp_hp, amount)
+                self.log(f"{target.character.name} gains {amount} temporary HP from {spell.name}!")
+            elif effect.status == "cleanse":
+                cleared = False
+                for status in list(target.status_effects):
+                    if status in (StatusEffect.SLOWED, StatusEffect.PRONE, StatusEffect.VULNERABLE, StatusEffect.MARKED):
+                        target.clear_status(status)
+                        target.status_durations.pop(status, None)
+                        self.log(f"{target.character.name}'s {status.name} removed by {spell.name}!")
+                        cleared = True
+                        break
+                if not cleared:
+                    self.log(f"{target.character.name} has no removable afflictions.")
+            elif effect.status == "arcane_shield":
+                target.spell_evasion_bonus = abs(effect.penalty_value)
+                target.spell_evasion_bonus_duration = effect.duration_rounds
+                self.log(f"{target.character.name} gains +{abs(effect.penalty_value)} evasion from Arcane Shield for {effect.duration_rounds} rounds!")
+            elif effect.status == "ironhide":
+                target.spell_soak_bonus = abs(effect.penalty_value)
+                target.spell_soak_bonus_duration = effect.duration_rounds
+                self.log(f"{target.character.name} gains +{abs(effect.penalty_value)} armor soak from Ironhide for {effect.duration_rounds} rounds!")
+            if effect.penalty_type and effect.penalty_value != 0:
+                if effect.penalty_type == "attack":
+                    target.spell_attack_penalty = effect.penalty_value
+                    target.spell_attack_penalty_duration = effect.duration_rounds
+                    self.log(f"{target.character.name} suffers {effect.penalty_value} to attack rolls for {effect.duration_rounds} rounds!")
+                elif effect.penalty_type == "spellcast":
+                    target.spell_penalty_total = abs(effect.penalty_value)
+                    target.spell_penalty_duration_rounds = effect.duration_rounds
+                    self.log(f"{target.character.name} suffers {effect.penalty_value} to spellcasting for {effect.duration_rounds} rounds!")
+                elif effect.penalty_type == "evasion":
+                    target.spell_evasion_penalty = effect.penalty_value
+                    target.spell_evasion_penalty_duration = effect.duration_rounds
+                    self.log(f"{target.character.name} suffers {effect.penalty_value} to evasion for {effect.duration_rounds} rounds!")
+
+    def _apply_overcast_consequence(self, caster: CombatParticipant):
+        """Roll 1d6 and apply mechanical overcast consequences."""
+        consequence_roll = roll_1d6()
+        self.log(f"Overcast consequence roll: {consequence_roll}")
+        if consequence_roll <= 2:
+            # Severe: knocked prone, take 3 damage, -2 to all rolls next round
+            self.log(f"SEVERE consequence! {caster.character.name} is knocked down and scarred.")
+            caster.apply_status(StatusEffect.PRONE)
+            caster.status_durations[StatusEffect.PRONE] = 1
+            caster.take_damage(3, armor_piercing=True)
+            caster.spell_attack_penalty = -2
+            caster.spell_attack_penalty_duration = 1
+        elif consequence_roll <= 4:
+            # Moderate: -1 to attack and spellcast for 2 rounds
+            self.log(f"Moderate consequence! {caster.character.name} suffers fatigue.")
+            caster.spell_attack_penalty = -1
+            caster.spell_attack_penalty_duration = 2
+            caster.spell_penalty_total = 1
+            caster.spell_penalty_duration_rounds = 2
+        else:
+            # Mild: ringing ears, -1 to spellcast for 1 round
+            self.log(f"Mild consequence! {caster.character.name} has ringing ears.")
+            caster.spell_penalty_total = 1
+            caster.spell_penalty_duration_rounds = 1
+
+    def _is_ally(self, a: CombatParticipant, b: CombatParticipant) -> bool:
+        """Check if two participants are on the same team."""
+        team_a = getattr(a, "team", None)
+        team_b = getattr(b, "team", None)
+        if team_a is not None and team_b is not None:
+            return team_a == team_b
+        return False
 
     def _ensure_can_act(self, actor: CombatParticipant) -> bool:
         if actor.current_hp > 0 or not actor.is_critical:
@@ -1582,6 +1723,49 @@ class AvaCombatEngine:
                 affected += 1
                 self.log(f"Lacuna: {p.character.name} is knocked prone.")
         return {"used": True, "affected": affected}
+
+    def action_swap_lineage_form(self, actor: CombatParticipant) -> Dict[str, Any]:
+        """LW: Flexible Design - swap lineage weapon between two templates (free action on turn)."""
+        if not actor.has_feat("LW: Flexible Design"):
+            self.log(f"{actor.character.name} does not have LW: Flexible Design!")
+            return {"used": False}
+        if not actor.lineage_weapon or not actor.lineage_weapon_alt:
+            self.log(f"{actor.character.name} has no alternate lineage weapon form set.")
+            return {"used": False}
+        old_form = actor.lineage_weapon
+        actor.lineage_weapon, actor.lineage_weapon_alt = actor.lineage_weapon_alt, actor.lineage_weapon
+        new_weapon = AVALORE_WEAPONS.get(actor.lineage_weapon)
+        if new_weapon and actor.weapon_main and actor.weapon_main.name == old_form:
+            actor.weapon_main = new_weapon
+        self.log(f"{actor.character.name} shifts lineage weapon from {old_form} to {actor.lineage_weapon}.")
+        return {"used": True, "old_form": old_form, "new_form": actor.lineage_weapon}
+
+    def action_switch_element(self, actor: CombatParticipant, element: str) -> Dict[str, Any]:
+        """LW: Mastery Of The Elements - spend 1 action to switch active element.
+        LW: Elemental users can set their element at combat start for free via set_lineage_element()."""
+        valid_elements = {"fire", "lightning", "ice", "acid", "force"}
+        if element not in valid_elements:
+            self.log(f"Invalid element '{element}'. Must be one of: {', '.join(sorted(valid_elements))}.")
+            return {"used": False}
+        if actor.has_feat("LW: Mastery Of The Elements"):
+            if not self._ensure_can_act(actor):
+                return {"used": False}
+            if not actor.consume_action(1, action_name="switch element"):
+                return {"used": False}
+            old = actor.active_lineage_element
+            actor.active_lineage_element = element
+            self.log(f"{actor.character.name} attunes lineage weapon to {element} (was {old or 'none'}).")
+            return {"used": True, "old_element": old, "new_element": element}
+        elif actor.has_feat("LW: Elemental"):
+            if actor.active_lineage_element is not None:
+                self.log(f"{actor.character.name} already has element set to {actor.active_lineage_element}. LW: Elemental cannot switch mid-combat.")
+                return {"used": False}
+            actor.active_lineage_element = element
+            self.log(f"{actor.character.name} attunes lineage weapon to {element}.")
+            return {"used": True, "old_element": None, "new_element": element}
+        else:
+            self.log(f"{actor.character.name} does not have LW: Elemental or LW: Mastery Of The Elements!")
+            return {"used": False}
 
     def action_throw_small_blade(self, attacker: CombatParticipant, defender: CombatParticipant, blade: Weapon) -> Dict[str, Any]:
         if not attacker.has_feat("Harmonized Arsenal"):
