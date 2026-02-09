@@ -9,6 +9,8 @@ from .spells import Spell, AVALORE_SPELLS
 from .enums import TerrainType, RangeCategory, ArmorCategory, ShieldType, StatusEffect, validate_loadout
 from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6
 from .feat_handlers import FeatHandler, FeatRegistry, FEAT_REGISTRY
+from .ai import CombatAI, STRATEGY_DEFAULTS
+from .batch import BatchRunner, BatchConfig, BatchResult
 
 __all__ = [
     "AvaCombatEngine",
@@ -22,4 +24,6 @@ __all__ = [
     "validate_loadout",
     "roll_2d10", "roll_1d2", "roll_1d3", "roll_1d6",
     "FeatHandler", "FeatRegistry", "FEAT_REGISTRY",
+    "CombatAI", "STRATEGY_DEFAULTS",
+    "BatchRunner", "BatchConfig", "BatchResult",
 ]

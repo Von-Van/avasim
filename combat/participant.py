@@ -49,6 +49,7 @@ class CombatParticipant:
     reactive_maneuver_used: bool = False
     swap_used_turn: bool = False
     sentinel_needs_lift: bool = False
+    team: str = ""
     creature_type: str = "Unknown"
     lineage_weapon: Optional[str] = None
     lineage_weapon_alt: Optional[str] = None

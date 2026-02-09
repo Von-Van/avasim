@@ -1835,15 +1835,39 @@ class AvaCombatEngine:
             return False, True
 
     def is_combat_ended(self) -> bool:
-        alive_participants = [p for p in self.participants if p.current_hp > 0 and not p.is_dead]
-        return len(alive_participants) <= 1
+        alive = [p for p in self.participants if p.current_hp > 0 and not p.is_dead]
+        if len(alive) <= 1:
+            return True
+        # Team mode: only applies when ALL alive participants have a team
+        all_have_teams = all(p.team for p in alive)
+        if all_have_teams:
+            teams = {p.team for p in alive}
+            if len(teams) <= 1:
+                return True
+        return False
+
+    def get_winning_team(self) -> str:
+        """Return the team name of survivors, or empty string."""
+        alive = [p for p in self.participants if p.current_hp > 0 and not p.is_dead]
+        if not alive:
+            return ""
+        teams = {p.team for p in alive if p.team}
+        if len(teams) == 1:
+            return teams.pop()
+        if len(alive) == 1:
+            return alive[0].team or alive[0].character.name
+        return ""
 
     def get_combat_summary(self) -> str:
         lines = ["\n=== Combat Status ==="]
         for p in self.participants:
-            status = "CRITICAL" if p.is_critical else "ALIVE"
+            status = "DEAD" if p.is_dead else ("CRITICAL" if p.is_critical else "ALIVE")
+            team_tag = f" [{p.team}]" if p.team else ""
             lines.append(
-                f"{p.character.name}: {p.current_hp}/{p.max_hp} HP | "
+                f"{p.character.name}{team_tag}: {p.current_hp}/{p.max_hp} HP | "
                 f"Anima: {p.anima}/{p.max_anima} | {status}"
             )
+        winner = self.get_winning_team()
+        if winner:
+            lines.append(f"\nWinner: {winner}")
         return "\n".join(lines)

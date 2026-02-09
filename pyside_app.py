@@ -6,7 +6,6 @@ from typing import Dict
 import json
 import html
 import csv
-import csv
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -49,6 +48,8 @@ from combat import (
     CombatParticipant,
     TacticalMap,
 )
+from combat.ai import CombatAI
+from combat.batch import BatchRunner, BatchConfig, BatchResult
 from combat.enums import RangeCategory, StatusEffect, TerrainType
 from ui import (
     Theme,
@@ -142,9 +143,20 @@ class CombatantEditor(QGroupBox):
         core_layout.addWidget(self.max_anima_input, 2, 1)
         core_box.setLayout(core_layout)
 
+        # Team assignment
+        self.team_choice = QComboBox()
+        self.team_choice.addItems(["Team A", "Team B", "Team C", "Team D", "FFA"])
+        self.team_choice.setCurrentText("Team A")
+        self.team_choice.setToolTip("Assign combatant to a team (FFA = no team)")
+
         # Compose layout
         self.layout().addWidget(QLabel("Name"))
         self.layout().addWidget(self.name_input)
+        team_row = QHBoxLayout()
+        team_row.addWidget(QLabel("Team:"))
+        team_row.addWidget(self.team_choice)
+        team_row.addStretch()
+        self.layout().addLayout(team_row)
         self.layout().addWidget(stats_box)
         self.layout().addWidget(skills_box)
         self.layout().addWidget(equip_box)
@@ -215,6 +227,8 @@ class CombatantEditor(QGroupBox):
             armor=armor,
             shield=shield,
         )
+        team_val = self.team_choice.currentText()
+        participant.team = "" if team_val == "FFA" else team_val
         return participant
 
     def to_template(self) -> dict:
@@ -228,6 +242,7 @@ class CombatantEditor(QGroupBox):
             "hand1": self.hand1_choice.currentText(),
             "hand2": self.hand2_choice.currentText(),
             "armor": self.armor_choice.currentText(),
+            "team": self.team_choice.currentText(),
         }
 
     def load_template(self, data: dict) -> None:
@@ -253,6 +268,8 @@ class CombatantEditor(QGroupBox):
             self.hand2_choice.setCurrentText(hand2_val)
         if data.get("armor") in self.armor_choice_model():
             self.armor_choice.setCurrentText(data.get("armor"))
+        if data.get("team"):
+            self.team_choice.setCurrentText(str(data["team"]))
         self._refresh_hand_options()
 
     def _blank_template(self) -> dict:
@@ -266,6 +283,7 @@ class CombatantEditor(QGroupBox):
             "hand1": "Arming Sword",
             "hand2": "(None)",
             "armor": "Light Armor",
+            "team": "Team A",
         }
 
     def armor_choice_model(self) -> set[str]:
@@ -548,10 +566,12 @@ class MainWindow(QWidget):
         self.scenario_cells: dict[tuple[int, int], str] = {}
         self.scenario_attacker_pos = (0, 0)
         self.scenario_defender_pos = (3, 0)
+        self.scenario_positions: list[tuple[int, int]] = [(0, 0), (3, 0)]  # N-combatant positions
         self._scenario_presets = self._build_scenario_presets()
         self._move_path_preview: list[tuple[int, int]] = []
         self._last_engine: AvaCombatEngine | None = None
         self.decision_log: list[str] = []
+        self.combat_ai = CombatAI(strategy="balanced", decision_log=self.decision_log)
 
         root_layout = QVBoxLayout()
         self.setLayout(root_layout)
@@ -605,12 +625,19 @@ class MainWindow(QWidget):
         char_layout.setSpacing(10)
         self.character_tab.setLayout(char_layout)
 
-        editors_layout = QHBoxLayout()
+        # Dynamic combatant editor list
+        self.combatant_editors: list[CombatantEditor] = []
+        self.editors_layout = QHBoxLayout()
+
         self.attacker_editor = CombatantEditor("Character 1")
+        self.attacker_editor.team_choice.setCurrentText("Team A")
         self.defender_editor = CombatantEditor("Character 2")
-        editors_layout.addWidget(self.attacker_editor)
-        editors_layout.addWidget(self.defender_editor)
-        char_layout.addLayout(editors_layout)
+        self.defender_editor.team_choice.setCurrentText("Team B")
+        self.combatant_editors = [self.attacker_editor, self.defender_editor]
+        self.editors_layout.addWidget(self.attacker_editor)
+        self.editors_layout.addWidget(self.defender_editor)
+        char_layout.addLayout(self.editors_layout)
+
         self.attacker_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
         self.defender_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
         for combo in (
@@ -620,6 +647,21 @@ class MainWindow(QWidget):
             self.defender_editor.hand2_choice,
         ):
             combo.currentTextChanged.connect(self._update_action_availability)
+
+        # Add/remove combatant buttons
+        combatant_btn_row = QHBoxLayout()
+        self.add_combatant_btn = QPushButton("+ Add Combatant")
+        self.add_combatant_btn.setIcon(IconProvider.get_icon("add"))
+        self.add_combatant_btn.clicked.connect(self._add_combatant_editor)
+        self.add_combatant_btn.setToolTip("Add another combatant (up to 8)")
+        self.remove_combatant_btn = QPushButton("- Remove Last")
+        self.remove_combatant_btn.clicked.connect(self._remove_combatant_editor)
+        self.remove_combatant_btn.setToolTip("Remove last combatant (minimum 2)")
+        self.remove_combatant_btn.setEnabled(False)
+        combatant_btn_row.addWidget(self.add_combatant_btn)
+        combatant_btn_row.addWidget(self.remove_combatant_btn)
+        combatant_btn_row.addStretch()
+        char_layout.addLayout(combatant_btn_row)
 
         template_row = QHBoxLayout()
         self.save_c1_btn = QPushButton("Save Character 1")
@@ -658,6 +700,12 @@ class MainWindow(QWidget):
         self.simulate_button.clicked.connect(self.run_simulation)
         self.simulate_button.setToolTip("Simulate the current setup (Ctrl+S to save setup)")
         run_row.addWidget(self.simulate_button)
+
+        self.batch_button = QPushButton("Run Batch Simulation")
+        self.batch_button.setIcon(IconProvider.get_icon("play"))
+        self.batch_button.clicked.connect(self._run_batch_simulation)
+        self.batch_button.setToolTip("Run N simulations and show win-rate statistics")
+        run_row.addWidget(self.batch_button)
         run_row.addStretch()
         sim_layout.addLayout(run_row)
 
@@ -708,6 +756,8 @@ class MainWindow(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([
             "Player controls both (Default)",
+            "Player controls Character 1",
+            "Full Auto (both AI)",
             "Full Simulation (Beta)",
             "Single Simulation (Beta)",
         ])
@@ -1107,12 +1157,128 @@ class MainWindow(QWidget):
         next_theme = "Light" if self.theme_combo.currentText() == "Dark" else "Dark"
         self.theme_combo.setCurrentText(next_theme)
 
+    # ------------------------------------------------------------------
+    # Dynamic combatant editor management
+    # ------------------------------------------------------------------
+
+    def _add_combatant_editor(self) -> None:
+        """Add a new CombatantEditor to the character panel (max 8)."""
+        if len(self.combatant_editors) >= 8:
+            self._show_toast("Maximum of 8 combatants reached.", "warning")
+            return
+        idx = len(self.combatant_editors) + 1
+        team_cycle = ["Team A", "Team B", "Team C", "Team D"]
+        default_team = team_cycle[(idx - 1) % len(team_cycle)]
+        editor = CombatantEditor(f"Character {idx}")
+        editor.team_choice.setCurrentText(default_team)
+        self.combatant_editors.append(editor)
+        self.editors_layout.addWidget(editor)
+        editor.name_input.textChanged.connect(self._refresh_scenario_preview)
+        editor.hand1_choice.currentTextChanged.connect(self._update_action_availability)
+        editor.hand2_choice.currentTextChanged.connect(self._update_action_availability)
+        self.remove_combatant_btn.setEnabled(len(self.combatant_editors) > 2)
+        self.add_combatant_btn.setEnabled(len(self.combatant_editors) < 8)
+        # Update map tool combo with new placement option
+        self._rebuild_map_tool_combo()
+        self._refresh_scenario_preview()
+
+    def _remove_combatant_editor(self) -> None:
+        """Remove the last CombatantEditor (minimum 2)."""
+        if len(self.combatant_editors) <= 2:
+            return
+        editor = self.combatant_editors.pop()
+        self.editors_layout.removeWidget(editor)
+        editor.setParent(None)
+        editor.deleteLater()
+        self.remove_combatant_btn.setEnabled(len(self.combatant_editors) > 2)
+        self.add_combatant_btn.setEnabled(len(self.combatant_editors) < 8)
+        self._rebuild_map_tool_combo()
+        self._refresh_scenario_preview()
+
+    def _rebuild_map_tool_combo(self) -> None:
+        """Rebuild the map tool combo to reflect current combatant count."""
+        if not hasattr(self, "map_tool_combo"):
+            return
+        current = self.map_tool_combo.currentText()
+        self.map_tool_combo.blockSignals(True)
+        self.map_tool_combo.clear()
+        tools = ["Paint Terrain", "Erase Terrain"]
+        for i, ed in enumerate(self.combatant_editors, 1):
+            tools.append(f"Place Character {i}")
+        self.map_tool_combo.addItems(tools)
+        idx = self.map_tool_combo.findText(current)
+        if idx >= 0:
+            self.map_tool_combo.setCurrentIndex(idx)
+        self.map_tool_combo.blockSignals(False)
+
+    def _default_positions(self, count: int) -> list[tuple[int, int]]:
+        """Return default starting positions for N combatants spread across the map."""
+        positions = [
+            (0, 0), (3, 0), (0, 3), (3, 3),
+            (1, 1), (2, 1), (1, 2), (2, 2),
+        ]
+        # Scale positions to current map size
+        w, h = self.scenario_width, self.scenario_height
+        scaled: list[tuple[int, int]] = []
+        if count <= 2:
+            scaled = [(0, 0), (min(3, w - 1), 0)]
+        else:
+            # Spread combatants along edges / corners
+            corners = [
+                (0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
+                (w // 2, 0), (0, h // 2), (w - 1, h // 2), (w // 2, h - 1),
+            ]
+            scaled = corners[:count]
+        # Deduplicate
+        seen: set[tuple[int, int]] = set()
+        result: list[tuple[int, int]] = []
+        for pos in scaled:
+            p = (max(0, min(w - 1, pos[0])), max(0, min(h - 1, pos[1])))
+            while p in seen:
+                p = ((p[0] + 1) % w, p[1])
+            seen.add(p)
+            result.append(p)
+        return result[:count]
+
+    def _get_scenario_positions(self, count: int) -> list[tuple[int, int]]:
+        """Get positions for N combatants.  Uses legacy attacker/defender pos for 2,
+        or scenario_positions list, falling back to _default_positions."""
+        # Keep legacy positions in sync
+        if count <= 2:
+            return [self.scenario_attacker_pos, self.scenario_defender_pos][:count]
+        # Extend scenario_positions if needed
+        while len(self.scenario_positions) < count:
+            extras = self._default_positions(count)
+            for pos in extras:
+                if pos not in self.scenario_positions:
+                    self.scenario_positions.append(pos)
+                    if len(self.scenario_positions) >= count:
+                        break
+            else:
+                # Fallback: just add next free cell
+                w, h = self.scenario_width, self.scenario_height
+                for y in range(h):
+                    for x in range(w):
+                        if (x, y) not in self.scenario_positions:
+                            self.scenario_positions.append((x, y))
+                            break
+                    if len(self.scenario_positions) >= count:
+                        break
+        return self.scenario_positions[:count]
+
+    # ------------------------------------------------------------------
+
     def _new_setup(self) -> None:
-        resp = QMessageBox.question(self, "Reset setup", "Reset both characters and settings to defaults?", QMessageBox.Yes | QMessageBox.No)
+        resp = QMessageBox.question(self, "Reset setup", "Reset all characters and settings to defaults?", QMessageBox.Yes | QMessageBox.No)
         if resp != QMessageBox.Yes:
             return
+        # Remove extra editors back to 2
+        while len(self.combatant_editors) > 2:
+            self._remove_combatant_editor()
         self.attacker_editor.load_template(self.attacker_editor._blank_template())
+        self.attacker_editor.team_choice.setCurrentText("Team A")
         self.defender_editor.load_template(self.defender_editor._blank_template())
+        self.defender_editor.team_choice.setCurrentText("Team B")
         self.theme_combo.setCurrentText("Dark")
         self.time_combo.setCurrentText("Day")
         self.mode_combo.setCurrentText("Full Auto (both AI)")
@@ -1155,6 +1321,9 @@ class MainWindow(QWidget):
             "time": self.time_combo.currentText(),
             "mode": self.mode_combo.currentText(),
             "surprise": self.surprise_combo.currentText(),
+            # New N-combatant format
+            "combatants": [ed.to_template() for ed in self.combatant_editors],
+            # Legacy keys for backward compat
             "char1": self.attacker_editor.to_template(),
             "char2": self.defender_editor.to_template(),
             "show_math": self.show_math_check.isChecked(),
@@ -1164,8 +1333,20 @@ class MainWindow(QWidget):
     def _apply_setup_data(self, data: dict) -> None:
         if not data:
             return
-        self.attacker_editor.load_template(data.get("char1", {}))
-        self.defender_editor.load_template(data.get("char2", {}))
+        # N-combatant format (new)
+        combatants = data.get("combatants")
+        if combatants and isinstance(combatants, list):
+            # Adjust editor count to match saved data
+            while len(self.combatant_editors) > len(combatants) and len(self.combatant_editors) > 2:
+                self._remove_combatant_editor()
+            while len(self.combatant_editors) < len(combatants) and len(self.combatant_editors) < 8:
+                self._add_combatant_editor()
+            for ed, tmpl in zip(self.combatant_editors, combatants):
+                ed.load_template(tmpl)
+        else:
+            # Legacy 2-combatant format
+            self.attacker_editor.load_template(data.get("char1", {}))
+            self.defender_editor.load_template(data.get("char2", {}))
         self._set_combo_text(self.theme_combo, data.get("theme", self.theme_combo.currentText()))
         self._set_combo_text(self.time_combo, data.get("time", self.time_combo.currentText()))
         self._set_combo_text(self.mode_combo, data.get("mode", self.mode_combo.currentText()))
@@ -1228,6 +1409,7 @@ class MainWindow(QWidget):
             "height": int(self.scenario_height),
             "attacker_pos": [int(self.scenario_attacker_pos[0]), int(self.scenario_attacker_pos[1])],
             "defender_pos": [int(self.scenario_defender_pos[0]), int(self.scenario_defender_pos[1])],
+            "positions": [[int(p[0]), int(p[1])] for p in self.scenario_positions],
             "terrain": [
                 {"x": int(x), "y": int(y), "terrain": terrain}
                 for (x, y), terrain in sorted(self.scenario_cells.items())
@@ -1252,6 +1434,12 @@ class MainWindow(QWidget):
         defender_pos = data.get("defender_pos", self.scenario_defender_pos)
         self.scenario_attacker_pos = (int(attacker_pos[0]), int(attacker_pos[1]))
         self.scenario_defender_pos = (int(defender_pos[0]), int(defender_pos[1]))
+        # Load N positions if present, else rebuild from legacy
+        saved_positions = data.get("positions")
+        if saved_positions and isinstance(saved_positions, list):
+            self.scenario_positions = [(int(p[0]), int(p[1])) for p in saved_positions]
+        else:
+            self.scenario_positions = [self.scenario_attacker_pos, self.scenario_defender_pos]
         self.scenario_cells = {}
         for cell in data.get("terrain", []):
             x = int(cell.get("x", 0))
@@ -1297,7 +1485,8 @@ class MainWindow(QWidget):
         target = (int(self.move_x.value()), int(self.move_y.value()))
         preview_map = self._build_scenario_map_only()
         tile = preview_map.get_tile(*target)
-        occupied = target == self.scenario_defender_pos
+        positions = self._get_scenario_positions(len(self.combatant_editors))
+        occupied = target in positions[1:]  # Can't move onto another combatant
         valid = tile is not None and tile.passable and not occupied
         self.move_button.setEnabled(valid)
 
@@ -1343,12 +1532,20 @@ class MainWindow(QWidget):
                 self.scenario_cells[(x, y)] = terrain
         elif tool == "Erase Terrain":
             self.scenario_cells.pop((x, y), None)
-        elif tool == "Place Character 1":
-            self.scenario_attacker_pos = (x, y)
-            self._ensure_scenario_positions()
-        elif tool == "Place Character 2":
-            self.scenario_defender_pos = (x, y)
-            self._ensure_scenario_positions()
+        elif tool.startswith("Place Character "):
+            try:
+                idx = int(tool.split()[-1]) - 1
+            except (ValueError, IndexError):
+                idx = 0
+            # Extend positions list if needed
+            while len(self.scenario_positions) <= idx:
+                self.scenario_positions.append((0, 0))
+            self.scenario_positions[idx] = (x, y)
+            # Keep legacy attacker/defender in sync
+            if idx == 0:
+                self.scenario_attacker_pos = (x, y)
+            elif idx == 1:
+                self.scenario_defender_pos = (x, y)
         self._refresh_scenario_preview()
         if hasattr(self, "preset_combo"):
             self.preset_combo.setCurrentText("Custom")
@@ -1423,15 +1620,17 @@ class MainWindow(QWidget):
         return overlays, path
 
     def _scenario_snapshot(self) -> dict:
+        positions = self._get_scenario_positions(len(self.combatant_editors))
+        pos_to_name: dict[tuple[int, int], str] = {}
+        for i, ed in enumerate(self.combatant_editors):
+            if i < len(positions):
+                name = ed.name_input.text() or f"Character {i + 1}"
+                pos_to_name[positions[i]] = name
         cells = []
         for y in range(self.scenario_height):
             for x in range(self.scenario_width):
                 terrain = self.scenario_cells.get((x, y), "normal")
-                occupant = None
-                if (x, y) == self.scenario_attacker_pos:
-                    occupant = self.attacker_editor.name_input.text() or "Attacker"
-                elif (x, y) == self.scenario_defender_pos:
-                    occupant = self.defender_editor.name_input.text() or "Defender"
+                occupant = pos_to_name.get((x, y))
                 cells.append({
                     "x": x,
                     "y": y,
@@ -1439,13 +1638,15 @@ class MainWindow(QWidget):
                     "occupant": occupant,
                 })
         overlays, path = self._build_overlay_data()
+        actor_pos = positions[0] if positions else self.scenario_attacker_pos
+        target_pos = positions[1] if len(positions) > 1 else self.scenario_defender_pos
         return {
             "label": "Scenario",
             "width": self.scenario_width,
             "height": self.scenario_height,
             "cells": cells,
-            "actor": {"position": self.scenario_attacker_pos},
-            "target": {"position": self.scenario_defender_pos},
+            "actor": {"position": actor_pos},
+            "target": {"position": target_pos},
             "overlays": overlays,
             "path": path,
         }
@@ -1456,7 +1657,7 @@ class MainWindow(QWidget):
         self._update_action_availability()
         self._update_move_button_state()
 
-    def _build_tactical_map(self, attacker: CombatParticipant, defender: CombatParticipant) -> TacticalMap:
+    def _build_tactical_map(self, participants: list[CombatParticipant]) -> TacticalMap:
         tactical_map = TacticalMap(self.scenario_width, self.scenario_height)
         terrain_costs = {
             "forest": 2,
@@ -1475,10 +1676,11 @@ class MainWindow(QWidget):
                 tile.passable = False
             if terrain in terrain_costs and terrain != "wall":
                 tile.move_cost = terrain_costs[terrain]
-        attacker.position = self.scenario_attacker_pos
-        defender.position = self.scenario_defender_pos
-        tactical_map.set_occupant(*attacker.position, attacker)
-        tactical_map.set_occupant(*defender.position, defender)
+        # Assign positions to all participants
+        positions = self._get_scenario_positions(len(participants))
+        for p, pos in zip(participants, positions):
+            p.position = pos
+            tactical_map.set_occupant(*pos, p)
         return tactical_map
 
     def _build_scenario_map_only(self) -> TacticalMap:
@@ -1894,11 +2096,10 @@ class MainWindow(QWidget):
     def run_simulation(self):
         try:
             self.decision_log = []
-            attacker = self.attacker_editor.to_participant()
-            defender = self.defender_editor.to_participant()
-            tactical_map = self._build_tactical_map(attacker, defender)
+            participants = [ed.to_participant() for ed in self.combatant_editors]
+            tactical_map = self._build_tactical_map(participants)
 
-            engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            engine = AvaCombatEngine(participants, tactical_map=tactical_map)
             self._last_engine = engine
             engine.set_time_of_day(self._time_of_day)
             engine.party_surprised = (self.surprise_combo.currentText() == "Party Surprised")
@@ -1931,11 +2132,13 @@ class MainWindow(QWidget):
 
                 mode_text = self.mode_combo.currentText()
                 player_controls_both = "Player controls" in mode_text and "both" in mode_text.lower()
-                player_controls_attacker = "Player controls Character 1" in mode_text and current is attacker
-                if player_controls_both or player_controls_attacker:
+                player_controls_c1 = "Player controls Character 1" in mode_text and current is participants[0]
+                if player_controls_both or player_controls_c1:
                     self._execute_player_turn(engine, current, target)
                 else:
-                    self._take_auto_actions(engine, current, target)
+                    self.combat_ai.decision_log = self.decision_log
+                    self.combat_ai.show_decisions = self.show_math_check.isChecked()
+                    self.combat_ai.decide_turn(engine, current)
 
                 engine._log_map_state(f"End turn: {current.character.name}")
 
@@ -1947,8 +2150,8 @@ class MainWindow(QWidget):
             action_lines = ["Combat finished", f"Turns executed: {turns}", "", "Combat Log:"] + engine.combat_log
             self._set_action_log(action_lines)
             self.map_view.setPlainText("\n".join(engine.map_log))
-            self.status_view.setHtml(self._format_status_badges([attacker, defender]))
-            self._update_combat_bars(attacker, defender)
+            self.status_view.setHtml(self._format_status_badges(participants))
+            self._update_combat_bars(participants)
             self._render_map_grid(engine.tactical_map)
             self._render_initiative(engine)
             self._set_replay_data(engine.map_snapshots)
@@ -1957,25 +2160,87 @@ class MainWindow(QWidget):
         except Exception as exc:
             QMessageBox.critical(self, "Simulation failed", f"An error occurred while simulating:\n{exc}")
 
+    def _run_batch_simulation(self) -> None:
+        """Run N batch simulations and display win-rate statistics."""
+        # Ask the user how many combats to run
+        from PySide6.QtWidgets import QInputDialog
+        num, ok = QInputDialog.getInt(self, "Batch Simulation", "Number of combats:", 100, 1, 10000, 50)
+        if not ok:
+            return
+
+        try:
+            # Capture editor templates so the factory creates fresh participants each time
+            templates = [ed.to_template() for ed in self.combatant_editors]
+            team_assignments = [ed.team_choice.currentText() for ed in self.combatant_editors]
+
+            def make_participants() -> list:
+                parts = []
+                for i, tmpl in enumerate(templates):
+                    ed = CombatantEditor(f"Character {i + 1}")
+                    ed.load_template(tmpl)
+                    p = ed.to_participant()
+                    team_text = team_assignments[i]
+                    p.team = "" if team_text == "FFA" else team_text
+                    parts.append(p)
+                    ed.deleteLater()
+                return parts
+
+            def make_map(participants):
+                return self._build_tactical_map(participants)
+
+            config = BatchConfig(
+                participants_factory=make_participants,
+                map_factory=make_map,
+                num_combats=num,
+                turn_limit=200,
+                strategy="balanced",
+                time_of_day=self._time_of_day,
+                surprise="none",
+            )
+            surprise_text = self.surprise_combo.currentText()
+            if surprise_text == "Party Surprised":
+                config.surprise = "surprised"
+            elif surprise_text == "Party Ambushes":
+                config.surprise = "ambush"
+
+            self.simulate_button.setEnabled(False)
+            self.batch_button.setEnabled(False)
+            self.batch_button.setText("Running...")
+            QApplication.processEvents()
+
+            result = BatchRunner.run(config, progress_callback=lambda i, n: None)
+
+            # Display results
+            summary_lines = result.summary().split("\n")
+            action_lines = ["Batch Simulation Complete", ""] + summary_lines
+            self._set_action_log(action_lines)
+            self.map_view.setPlainText(result.summary())
+            self._show_toast(f"Batch done: {num} combats in {result.elapsed_seconds:.1f}s", "info")
+        except Exception as exc:
+            QMessageBox.critical(self, "Batch failed", f"An error occurred during batch simulation:\n{exc}")
+        finally:
+            self.simulate_button.setEnabled(True)
+            self.batch_button.setEnabled(True)
+            self.batch_button.setText("Run Batch Simulation")
+
     def move_attacker(self):
         try:
-            attacker = self.attacker_editor.to_participant()
-            defender = self.defender_editor.to_participant()
-            tactical_map = self._build_tactical_map(attacker, defender)
-            engine = AvaCombatEngine([attacker, defender], tactical_map=tactical_map)
+            participants = [ed.to_participant() for ed in self.combatant_editors]
+            tactical_map = self._build_tactical_map(participants)
+            engine = AvaCombatEngine(participants, tactical_map=tactical_map)
             self._last_engine = engine
             engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
+            attacker = participants[0]
             success = engine.action_move(attacker, int(self.move_x.value()), int(self.move_y.value()))
             if not success:
                 engine.combat_log.append("Move failed.")
-                self._show_toast("Move failed.", "warning")
                 self._show_toast("Move failed.", "warning")
             engine._log_map_state("After move")
             engine.combat_log.append(engine.get_combat_summary())
             self._set_action_log(engine.combat_log)
             self.map_view.setPlainText("\n".join(engine.map_log))
-            self.status_view.setHtml(self._format_status_badges([attacker, defender]))
-            self._update_combat_bars(attacker, defender)
+            self.status_view.setHtml(self._format_status_badges(participants))
+            self._update_combat_bars(participants)
             self._render_map_grid(engine.tactical_map)
             self._set_decision_log()
             self._save_settings()
@@ -2164,7 +2429,7 @@ class MainWindow(QWidget):
             )
         return "".join(chips)
 
-    def _update_combat_bars(self, attacker: CombatParticipant, defender: CombatParticipant) -> None:
+    def _update_combat_bars(self, participants: list[CombatParticipant]) -> None:
         if not hasattr(self, "attacker_hp_bar"):
             return
         from combat.enums import ArmorCategory
@@ -2180,12 +2445,17 @@ class MainWindow(QWidget):
                 return 3
             return 0
 
-        self.attacker_hp_bar.setMaximum(max(1, attacker.max_hp))
-        self.attacker_hp_bar.setValue(max(0, attacker.current_hp))
-        self.attacker_armor_bar.setValue(armor_score(attacker))
-        self.defender_hp_bar.setMaximum(max(1, defender.max_hp))
-        self.defender_hp_bar.setValue(max(0, defender.current_hp))
-        self.defender_armor_bar.setValue(armor_score(defender))
+        # Update first two bars (always present)
+        if len(participants) >= 1:
+            self.attacker_hp_bar.setMaximum(max(1, participants[0].max_hp))
+            self.attacker_hp_bar.setValue(max(0, participants[0].current_hp))
+            self.attacker_hp_bar.setFormat(f"{participants[0].character.name} HP: %v/%m")
+            self.attacker_armor_bar.setValue(armor_score(participants[0]))
+        if len(participants) >= 2:
+            self.defender_hp_bar.setMaximum(max(1, participants[1].max_hp))
+            self.defender_hp_bar.setValue(max(0, participants[1].current_hp))
+            self.defender_hp_bar.setFormat(f"{participants[1].character.name} HP: %v/%m")
+            self.defender_armor_bar.setValue(armor_score(participants[1]))
 
     def _execute_player_turn(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         actions = self._selected_player_actions()
@@ -2206,471 +2476,6 @@ class MainWindow(QWidget):
                 engine.action_evade(current)
             elif action == "Block":
                 engine.action_block(current)
-
-    def _take_auto_actions(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
-        # Movement-to-range step before feats/attacks
-        weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
-        dist = engine.tactical_map.manhattan_distance(*current.position, *target.position) if engine.tactical_map else "?"
-        expected = self._expected_attack_value(current, target, weapon)
-        attack_mod = self._attack_mod_for_weapon(current, weapon)
-        evasion_mod = self._evasion_mod(target)
-        soak = self._expected_soak(target)
-        self._log_decision(
-            engine,
-            f"Decision: Auto acting with {weapon.name} (dist {dist}, range {weapon.range_category.name}, EV {expected:.1f})",
-        )
-        self._log_decision(
-            engine,
-            f"EV breakdown: aim {attack_mod:+d}, evade {evasion_mod:+d}, expected soak {soak:.1f}",
-        )
-        self._move_to_preferred_range(engine, current, target, weapon)
-
-        weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
-
-        # Aberration Slayer: set target type once for bonus damage
-        if getattr(current, "has_feat", lambda x: False)("Aberration Slayer"):
-            if getattr(target, "creature_type", None) and not getattr(current, "aberration_slayer_type", None):
-                engine.action_set_aberration_target(current, target.creature_type)
-
-        # Support inspirations: only fire when a third ally exists to avoid buffing the enemy
-        allies = [p for p in engine.participants if p is not current and p is not target and p.current_hp > 0]
-        if allies:
-            if getattr(current, "has_feat", lambda x: False)("Rousing Inspiration") and engine.tactical_map:
-                if any(not getattr(p, "inspired_scene", False) for p in allies):
-                    res = engine.action_rousing_inspiration(current)
-                    if res.get("used") and res.get("granted"):
-                        return
-            if getattr(current, "has_feat", lambda x: False)("Commanding Inspiration"):
-                if any(getattr(p, "temp_attack_bonus", 0) < 1 for p in allies):
-                    res = engine.action_commanding_inspiration(current)
-                    if res.get("used") and res.get("granted"):
-                        return
-
-        # Defensive stance: Patient Flow / Bastion / Second Wind if low HP
-        hp_ratio = current.current_hp / max(1, current.max_hp)
-        if hp_ratio < 0.5:
-            if getattr(current, "has_feat", lambda x: False)("Patient Flow"):
-                if engine.action_patient_flow(current):
-                    return
-            if getattr(current, "has_feat", lambda x: False)("Bastion Stance") and current.shield:
-                if engine.action_bastion_stance(current):
-                    return
-            if getattr(current, "has_feat", lambda x: False)("Second Wind"):
-                if engine.action_second_wind(current):
-                    return
-
-        # Lineage Lacuna (scene) if clustered targets are nearby
-        if getattr(current, "has_feat", lambda x: False)("LW: Lacuna") and engine.tactical_map:
-            if not getattr(current, "lacuna_used_scene", False):
-                cx, cy = target.position
-                res = engine.action_lineage_lacuna(current, cx, cy)
-                if res.get("used") and res.get("affected"):
-                    return
-
-        # Quickdraw (limited) if available and weapon supports it
-        if getattr(current, "has_feat", lambda x: False)("Quickdraw") and weapon.name in {"Longbow", "Crossbow", "Sling"}:
-            mode = "evade" if hp_ratio < 0.5 else "dash"
-            used = engine.action_quickdraw(current, target, weapon, mode=mode)
-            if used.get("used"):
-                return
-
-        # Hamstring (limited) if applicable weapon
-        if getattr(current, "has_feat", lambda x: False)("Hamstring") and weapon.name in {"Whip", "Recurve Bow", "Crossbow"}:
-            used = engine.action_hamstring(current, target, weapon)
-            if used.get("used"):
-                self._log_decision(engine, "Feat hook: Hamstring (eligible weapon, limited action).")
-                return
-
-        # Fanning Blade for small/throwing style when multiple foes are nearby
-        if getattr(current, "has_feat", lambda x: False)("Fanning Blade") and engine.tactical_map:
-            allowed = {"Throwing Knife", "Meteor Hammer", "Sling", "Arcane Wand"}
-            if weapon.name in allowed:
-                cx, cy = target.position
-                nearby = 0
-                for nx in range(max(0, cx - 2), min(engine.tactical_map.width, cx + 3)):
-                    for ny in range(max(0, cy - 2), min(engine.tactical_map.height, cy + 3)):
-                        tile = engine.tactical_map.get_tile(nx, ny)
-                        if tile and isinstance(tile.occupant, CombatParticipant) and tile.occupant is not current and tile.occupant.current_hp > 0:
-                            nearby += 1
-                if nearby >= 2:
-                    used = engine.action_fanning_blade(current, weapon, cx, cy)
-                    if used.get("used"):
-                        self._log_decision(engine, f"Feat hook: Fanning Blade (clustered targets={nearby}).")
-                        return
-
-        # Galestorm Strike (two-handed heavy) for burst knockdown potential
-        if getattr(current, "has_feat", lambda x: False)("Galestorm Stance") and weapon.name in {"Greatsword", "Polearm", "Staff"}:
-            used = engine.action_galestorm_strike(current, target, weapon)
-            if used.get("used"):
-                self._log_decision(engine, "Feat hook: Galestorm Strike (two-handed stance).")
-                return
-
-        # Whirling Devil: activate before moving through foes
-        if getattr(current, "has_feat", lambda x: False)("Whirling Devil") and not current.whirling_devil_active:
-            engine.action_whirling_devil(current)
-
-        # Vault to close distance with defense if available
-        if getattr(current, "has_feat", lambda x: False)("Combat Acrobat") and engine.tactical_map:
-            dist = engine.get_distance(current, target)
-            if dist > 1:
-                tx, ty = target.position
-                engine.action_vault(current, tx, ty)
-
-        # Ranger's Gambit at melee with bows
-        if getattr(current, "has_feat", lambda x: False)("Ranger's Gambit") and weapon.name in {"Recurve Bow", "Longbow"}:
-            if engine.tactical_map:
-                dist = engine.tactical_map.manhattan_distance(current.position[0], current.position[1], target.position[0], target.position[1])
-                if dist <= 1:
-                    used = engine.action_rangers_gambit(current, target, weapon)
-                    if used.get("used"):
-                        self._log_decision(engine, "Feat hook: Ranger's Gambit (bow at melee range).")
-                        return
-
-        # Piercing/AArmor piercer when target blocking with shield
-        if target.shield and target.is_blocking and weapon.name in {"Arming Sword", "Dagger"}:
-            if getattr(current, "has_feat", lambda x: False)("Piercing Strike"):
-                used = engine.action_piercing_strike(current, target, weapon)
-                if used.get("used"):
-                    self._log_decision(engine, "Feat hook: Piercing Strike (target blocking with shield).")
-                    return
-            if getattr(current, "has_feat", lambda x: False)("Armor Piercer"):
-                used = engine.action_armor_piercer(current, target, weapon)
-                if used.get("used"):
-                    self._log_decision(engine, "Feat hook: Armor Piercer (target blocking with shield).")
-                    return
-
-        # Feint to ignore Shieldmaster/Quickfooted if EV is low
-        if getattr(current, "has_feat", lambda x: False)("Feint"):
-            if self._expected_attack_value(current, target, weapon) < 1.0:
-                used = engine.action_feint(current, target)
-                if used.get("used"):
-                    self._log_decision(engine, "Feat hook: Feint (low expected value).")
-                    return
-
-        # Trick Shot (ranged) choose effect: dazzling if not marked, else bodkin
-        if getattr(current, "has_feat", lambda x: False)("Trick Shot") and weapon.range_category == RangeCategory.RANGED:
-            effect = "dazzling" if not target.has_status(StatusEffect.MARKED) else "bodkin"
-            used = engine.action_trick_shot(current, target, weapon, effect)
-            if used.get("used"):
-                self._log_decision(engine, f"Feat hook: Trick Shot ({effect}).")
-                return
-
-        # Two Birds One Stone when a second target is lined up behind the first
-        if getattr(current, "has_feat", lambda x: False)("Two Birds One Stone") and weapon.name in {"Crossbow", "Spellbook"}:
-            if self._has_trailing_target(engine, current, target):
-                used = engine.action_two_birds_one_stone(current, target, weapon)
-                if used.get("used"):
-                    self._log_decision(engine, "Feat hook: Two Birds One Stone (lined-up target).")
-                    return
-
-        # Volley for bows if feat available
-        if getattr(current, "has_feat", lambda x: False)("Volley") and weapon.name in {"Recurve Bow", "Longbow"}:
-            used = engine.action_volley(current, target, weapon)
-            if used.get("used"):
-                self._log_decision(engine, "Feat hook: Volley (bow burst).")
-                return
-
-        # Topple/Shove when Forward Charge primed
-        if current.forward_charge_ready:
-            used = engine.action_topple(current, target)
-            if used.get("used") and used.get("success"):
-                return
-            used = engine.action_shove(current, target)
-            if used.get("used") and used.get("success"):
-                return
-
-        # Hilt Strike as follow-up for two-handed weapons
-        if getattr(current, "has_feat", lambda x: False)("Hilt Strike") and weapon.is_two_handed:
-            used = engine.action_hilt_strike(current, target, weapon)
-            if used.get("used"):
-                return
-
-        # Momentum Strike if already dashed
-        if getattr(current, "has_feat", lambda x: False)("Momentum") and current.dashed_this_turn:
-            used = engine.action_momentum_strike(current, target)
-            if used.get("used"):
-                return
-
-        # Dual Striker when dual-wielding eligible weapons
-        if getattr(current, "has_feat", lambda x: False)("Dual Striker") and current.weapon_main and current.weapon_offhand:
-            used = engine.action_dual_striker(current, target)
-            if used.get("used"):
-                return
-
-        # Vicious Mockery if present and attacks have poor EV
-        expected_value = self._expected_attack_value(current, target, weapon)
-        if getattr(current, "has_feat", lambda x: False)("Vicious Mockery") and expected_value < 0.8:
-            used = engine.action_vicious_mockery(current, target)
-            if used.get("used"):
-                self._log_decision(engine, "Feat hook: Vicious Mockery (attack EV low).")
-                expected_value = self._expected_attack_value(current, target, weapon)
-
-        # Decide stance mathematically based on stats and equipment
-        self._choose_stance(engine, current, target)
-
-        attack_cost = weapon.actions_required
-        swings = 0
-        while current.actions_remaining >= attack_cost and target.current_hp > 0 and swings < 2:
-            if expected_value <= 0:
-                break
-            engine.perform_attack(current, target, weapon=weapon)
-            swings += 1
-            expected_value = self._expected_attack_value(current, target, weapon)
-
-    # ======== Movement Helpers ========
-    def _is_passable(self, tactical_map: TacticalMap, x: int, y: int) -> bool:
-        tile = tactical_map.get_tile(x, y)
-        if not tile or not tile.passable:
-            return False
-        if tile.occupant and isinstance(tile.occupant, CombatParticipant):
-            return False
-        return True
-
-    def _movement_allowance(self, actor: CombatParticipant, use_dash: bool) -> int:
-        base_movement = 5
-        movement_penalty = actor.armor.movement_penalty_for(actor.character) if actor.armor else 0
-        if actor.has_status(StatusEffect.SLOWED):
-            movement_penalty -= 2
-        base_allow = max(0, base_movement + movement_penalty)
-        if use_dash:
-            dash_bonus = 4
-            return dash_bonus if actor.free_move_used else base_allow + dash_bonus
-        return 0 if actor.free_move_used else base_allow
-
-    def _reachable_tiles(self, tactical_map: TacticalMap, start: tuple[int, int], allowance: int) -> Dict[tuple[int, int], int]:
-        reachable: Dict[tuple[int, int], int] = {}
-        q = deque()
-        q.append((start, 0))
-        seen = {start}
-        while q:
-            (x, y), cost = q.popleft()
-            reachable[(x, y)] = cost
-            for nx, ny in tactical_map.get_neighbors(x, y):
-                if (nx, ny) in seen:
-                    continue
-                tile = tactical_map.get_tile(nx, ny)
-                if not tile or not tile.passable:
-                    continue
-                step_cost = tile.move_cost
-                new_cost = cost + step_cost
-                if new_cost > allowance:
-                    continue
-                if tile.occupant and isinstance(tile.occupant, CombatParticipant):
-                    continue
-                seen.add((nx, ny))
-                q.append(((nx, ny), new_cost))
-        return reachable
-
-    def _step_toward(self, tactical_map: TacticalMap, ax: int, ay: int, tx: int, ty: int, direction: int) -> tuple[int, int] | None:
-        dx = tx - ax
-        dy = ty - ay
-        # Try axis with greater distance first
-        axes = [(1 if dx > 0 else -1 if dx < 0 else 0, 0), (0, 1 if dy > 0 else -1 if dy < 0 else 0)]
-        if abs(dy) > abs(dx):
-            axes = axes[::-1]
-        for sx, sy in axes:
-            nx, ny = ax + direction * sx, ay + direction * sy
-            if nx == ax and ny == ay:
-                continue
-            if self._is_passable(tactical_map, nx, ny):
-                return (nx, ny)
-        return None
-
-    def _move_to_preferred_range(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant, weapon) -> None:
-        if not engine.tactical_map:
-            return
-        dist = engine.get_distance(current, target)
-        # Desired bands
-        if weapon.range_category == RangeCategory.MELEE:
-            desired_min, desired_max = 1, 1
-        elif weapon.range_category == RangeCategory.SKIRMISHING:
-            desired_min, desired_max = 2, 8
-        else:
-            desired_min, desired_max = 6, 30
-
-        # If already in band, skip
-        if desired_min <= dist <= desired_max:
-            return
-
-        # Compute reachable tiles for free move; if none fit, consider dash
-        best = None
-        best_score = None
-        best_use_dash = False
-
-        for use_dash in (False, True):
-            allowance = self._movement_allowance(current, use_dash)
-            if allowance <= 0:
-                continue
-            reachable = self._reachable_tiles(engine.tactical_map, current.position, allowance)
-            for (x, y), cost in reachable.items():
-                if (x, y) == target.position:
-                    continue
-                new_dist = engine.tactical_map.manhattan_distance(x, y, target.position[0], target.position[1])
-                score = abs(max(desired_min, min(desired_max, new_dist)) - new_dist)
-                # Prefer in-band, then closer to band, then lower cost, then avoid using dash if possible
-                in_band = desired_min <= new_dist <= desired_max
-                rank = (0 if in_band else 1, score, cost, 1 if use_dash else 0)
-                if best_score is None or rank < best_score:
-                    best_score = rank
-                    best = (x, y)
-                    best_use_dash = use_dash
-            if best_score and best_score[0] == 0:
-                break  # found in-band without needing dash or with current mode
-
-        if best and current.actions_remaining > 0:
-            new_dist = engine.tactical_map.manhattan_distance(best[0], best[1], target.position[0], target.position[1])
-            move_kind = "Dash" if best_use_dash else "Move"
-            self._log_decision(engine, f"Range move: {dist} → {new_dist} via {move_kind} to {best}")
-            if best_use_dash:
-                if not engine.action_dash(current, *best):
-                    engine.action_move(current, *best)
-            else:
-                if not engine.action_move(current, *best):
-                    engine.action_dash(current, *best)
-
-    def _has_trailing_target(self, engine: AvaCombatEngine, attacker: CombatParticipant, first: CombatParticipant) -> bool:
-        if not engine.tactical_map:
-            return False
-        ax, ay = attacker.position
-        fx, fy = first.position
-        dx = fx - ax
-        dy = fy - ay
-        if dx == 0 and dy == 0:
-            return False
-        step_x = 0 if dx == 0 else (1 if dx > 0 else -1)
-        step_y = 0 if dy == 0 else (1 if dy > 0 else -1)
-        tx, ty = fx, fy
-        for _ in range(1, 6):
-            tx += step_x
-            ty += step_y
-            tile = engine.tactical_map.get_tile(tx, ty)
-            if not tile:
-                break
-            if tile.occupant and isinstance(tile.occupant, CombatParticipant) and tile.occupant.current_hp > 0:
-                other = tile.occupant
-                if other is not attacker and other is not first:
-                    return True
-        return False
-
-    # ======== Decision Helpers ========
-    def _prob_2d10_at_least(self, threshold: int) -> float:
-        # Exact probability for 2d10 >= threshold
-        counts = [0] * 21  # index by sum
-        total = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                s = a + b
-                counts[s] += 1
-                total += 1
-        valid = sum(count for s, count in enumerate(counts) if s >= threshold)
-        return valid / total if total else 0.0
-
-    def _expected_soak(self, defender: CombatParticipant) -> float:
-        armor = defender.armor
-        if armor is None:
-            return 0.0
-        from combat.enums import ArmorCategory
-        meets = armor.meets_requirements(defender.character)
-        base = 0.0
-        if armor.category == ArmorCategory.LIGHT:
-            base = 0.5
-        elif armor.category == ArmorCategory.MEDIUM:
-            base = 1.0
-        elif armor.category == ArmorCategory.HEAVY:
-            base = 2.0
-        if not meets:
-            base = max(0.0, base - 1.0)
-        return base
-
-    def _attack_mod_for_weapon(self, attacker: CombatParticipant) -> int:
-        from combat.enums import RangeCategory
-        weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
-        if weapon.range_category == RangeCategory.MELEE:
-            return attacker.character.get_modifier("Strength", "Athletics")
-        else:
-            return attacker.character.get_modifier("Dexterity", "Acrobatics")
-
-    def _evasion_mod(self, defender: CombatParticipant) -> int:
-        base = defender.character.get_modifier("Dexterity", "Acrobatics")
-        if defender.armor:
-            base += defender.armor.evasion_penalty
-        return base
-
-    def _expected_attack_value(self, attacker: CombatParticipant, defender: CombatParticipant, weapon) -> float:
-        # Expected damage per action considering contested evasion
-        attack_base = weapon.accuracy_bonus + self._attack_mod_for_weapon(attacker)
-        ev_mod = self._evasion_mod(defender)
-
-        # Compute P( (2d10 attack) - (2d10 evasion) > ev_mod - attack_base )
-        # Build diff distribution
-        diff_counts = {}
-        total = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                for c in range(1, 11):
-                    for d in range(1, 11):
-                        diff = (a + b) - (c + d)
-                        diff_counts[diff] = diff_counts.get(diff, 0) + 1
-                        total += 1
-        threshold = ev_mod - attack_base
-        # strict > threshold
-        valid = sum(count for diff, count in diff_counts.items() if diff > threshold)
-        p_hit = valid / total if total else 0.0
-
-        # Armor soak expectation
-        soak = 0.0 if weapon.is_piercing() else self._expected_soak(defender)
-        base_damage = max(0.0, weapon.damage - soak)
-        expected = p_hit * base_damage
-        # Normalize per action
-        actions = max(1, weapon.actions_required)
-        return expected / actions
-
-    def _choose_stance(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
-        # Decide between evade and block based on probabilities and HP
-        hp_ratio = current.current_hp / max(1, current.max_hp)
-        weapon = (target.weapon_main or AVALORE_WEAPONS["Unarmed"]) if target else AVALORE_WEAPONS["Unarmed"]
-
-        # Block success probability
-        p_block = 0.0
-        if current.shield:
-            threshold = current.shield.get_block_dc() - current.shield.block_modifier
-            p_block = self._prob_2d10_at_least(threshold)
-
-        # Evasion success approximation against target
-        # Using contested model like expected attack calc, but swap roles
-        attack_base = weapon.accuracy_bonus + self._attack_mod_for_weapon(target)
-        ev_mod = self._evasion_mod(current)
-        diff_counts = {}
-        total = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                for c in range(1, 11):
-                    for d in range(1, 11):
-                        diff = (c + d) - (a + b)  # defender vs attacker
-                        diff_counts[diff] = diff_counts.get(diff, 0) + 1
-                        total += 1
-        threshold = attack_base - ev_mod
-        valid = sum(count for diff, count in diff_counts.items() if diff > threshold)
-        p_evade = valid / total if total else 0.0
-
-        # Strategy: if low HP and high defense chance, defend; otherwise attack
-        defend = False
-        if hp_ratio < 0.5 and max(p_evade, p_block) > 0.55:
-            defend = True
-        elif max(p_evade, p_block) > 0.7:
-            defend = True
-
-        if defend:
-            # Prefer the better stance
-            if p_block >= p_evade and current.shield:
-                self._log_decision(engine, f"Stance: Block (p_block={p_block:.2f} vs p_evade={p_evade:.2f})")
-                engine.action_block(current)
-            else:
-                self._log_decision(engine, f"Stance: Evade (p_evade={p_evade:.2f} vs p_block={p_block:.2f})")
-                engine.action_evade(current)
-        else:
-            # Clear stances by not re-applying; the engine resets per turn
-            pass
 
 
 def main():

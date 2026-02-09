@@ -608,10 +608,11 @@ class CombatAI:
 
     @staticmethod
     def _is_ally(engine: AvaCombatEngine, a: CombatParticipant, b: CombatParticipant) -> bool:
-        team_a = getattr(a, "team", None)
-        team_b = getattr(b, "team", None)
-        if team_a is not None and team_b is not None:
+        team_a = getattr(a, "team", "") or ""
+        team_b = getattr(b, "team", "") or ""
+        if team_a and team_b:
             return team_a == team_b
+        # Empty team = FFA / no team → never allies
         return False
 
     @staticmethod
