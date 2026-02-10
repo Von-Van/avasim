@@ -35,6 +35,7 @@ from .components import (
     IconButton,
     SectionGroupBox,
     ControlRow,
+    CollapsibleSection,
 )
 
 # Map visualization
@@ -65,6 +66,7 @@ __all__ = [
     "IconButton",
     "SectionGroupBox",
     "ControlRow",
+    "CollapsibleSection",
     # Map
     "TacticalMapWidget",
     "MapLegend",

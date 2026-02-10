@@ -1,24 +1,104 @@
 {
-  "theme": "Dark",
+  "theme": "Light",
   "time": "Day",
   "mode": "Player controls both (Default)",
   "surprise": "None",
+  "combatants": [
+    {
+      "name": "Captain",
+      "hp": 28,
+      "anima": 2,
+      "max_anima": 4,
+      "stats": {
+        "Dexterity": 1,
+        "Intelligence": 0,
+        "Harmony": 0,
+        "Strength": 2
+      },
+      "skills": {
+        "Dexterity": {
+          "Acrobatics": 1,
+          "Stealth": 0,
+          "Finesse": 1
+        },
+        "Intelligence": {
+          "Healing": 0,
+          "Perception": 0,
+          "Research": 0
+        },
+        "Harmony": {
+          "Arcana": 0,
+          "Nature": 0,
+          "Belief": -3
+        },
+        "Strength": {
+          "Athletics": 2,
+          "Fortitude": 1,
+          "Forging": 0
+        }
+      },
+      "hand1": "Arming Sword",
+      "hand2": "Small Shield",
+      "armor": "Medium Armor",
+      "team": "Team A",
+      "feats": []
+    },
+    {
+      "name": "Brigand",
+      "hp": 24,
+      "anima": 0,
+      "max_anima": 2,
+      "stats": {
+        "Dexterity": 2,
+        "Intelligence": 0,
+        "Harmony": 0,
+        "Strength": 1
+      },
+      "skills": {
+        "Dexterity": {
+          "Acrobatics": 2,
+          "Stealth": 1,
+          "Finesse": 2
+        },
+        "Intelligence": {
+          "Healing": 0,
+          "Perception": 0,
+          "Research": 0
+        },
+        "Harmony": {
+          "Arcana": 0,
+          "Nature": 0,
+          "Belief": 0
+        },
+        "Strength": {
+          "Athletics": 1,
+          "Fortitude": 0,
+          "Forging": 0
+        }
+      },
+      "hand1": "Arming Sword",
+      "hand2": "(None)",
+      "armor": "Light Armor",
+      "team": "Team B",
+      "feats": []
+    }
+  ],
   "char1": {
-    "name": "eta",
-    "hp": 20,
-    "anima": 0,
-    "max_anima": 0,
+    "name": "Captain",
+    "hp": 28,
+    "anima": 2,
+    "max_anima": 4,
     "stats": {
-      "Dexterity": 0,
+      "Dexterity": 1,
       "Intelligence": 0,
       "Harmony": 0,
-      "Strength": 0
+      "Strength": 2
     },
     "skills": {
       "Dexterity": {
-        "Acrobatics": 0,
+        "Acrobatics": 1,
         "Stealth": 0,
-        "Finesse": 0
+        "Finesse": 1
       },
       "Intelligence": {
         "Healing": 0,
@@ -31,31 +111,33 @@
         "Belief": -3
       },
       "Strength": {
-        "Athletics": 0,
-        "Fortitude": 0,
+        "Athletics": 2,
+        "Fortitude": 1,
         "Forging": 0
       }
     },
-    "hand1": "Crossbow",
-    "hand2": "(None)",
-    "armor": "Light Armor"
+    "hand1": "Arming Sword",
+    "hand2": "Small Shield",
+    "armor": "Medium Armor",
+    "team": "Team A",
+    "feats": []
   },
   "char2": {
-    "name": "mckenzie",
-    "hp": 20,
+    "name": "Brigand",
+    "hp": 24,
     "anima": 0,
-    "max_anima": 0,
+    "max_anima": 2,
     "stats": {
-      "Dexterity": 0,
+      "Dexterity": 2,
       "Intelligence": 0,
       "Harmony": 0,
-      "Strength": 0
+      "Strength": 1
     },
     "skills": {
       "Dexterity": {
-        "Acrobatics": 0,
-        "Stealth": 0,
-        "Finesse": 0
+        "Acrobatics": 2,
+        "Stealth": 1,
+        "Finesse": 2
       },
       "Intelligence": {
         "Healing": 0,
@@ -68,14 +150,40 @@
         "Belief": 0
       },
       "Strength": {
-        "Athletics": 0,
+        "Athletics": 1,
         "Fortitude": 0,
         "Forging": 0
       }
     },
     "hand1": "Arming Sword",
     "hand2": "(None)",
-    "armor": "Light Armor"
+    "armor": "Light Armor",
+    "team": "Team B",
+    "feats": []
   },
-  "show_math": false
+  "show_math": false,
+  "scenario": {
+    "width": 10,
+    "height": 10,
+    "attacker_pos": [
+      0,
+      0
+    ],
+    "defender_pos": [
+      3,
+      0
+    ],
+    "positions": [
+      [
+        0,
+        0
+      ],
+      [
+        3,
+        0
+      ]
+    ],
+    "terrain": [],
+    "time": "Day"
+  }
 }

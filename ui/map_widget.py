@@ -58,8 +58,9 @@ class TacticalMapWidget(QGraphicsView):
         self.scene.setSceneRect(0, 0, width * self.CELL_WIDTH, height * self.CELL_HEIGHT)
         
         # Rendering hints for smooth graphics
-        self.setRenderHint(self.RenderHint.Antialiasing)
-        self.setRenderHint(self.RenderHint.SmoothPixmapTransform)
+        from PySide6.QtGui import QPainter
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setMouseTracking(True)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         

@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QSlider,
     QScrollArea,
+    QSplitter,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QFont, QAction, QColor, QBrush, QPen, QDesktopServices
@@ -63,6 +65,7 @@ from ui import (
     TextHighlighter,
     TacticalMapWidget,
     TacticalMapWidget,
+    CollapsibleSection,
 )
 
 
@@ -876,60 +879,84 @@ class MainWindow(QWidget):
         self.combat_ai = CombatAI(strategy="balanced", decision_log=self.decision_log)
 
         root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
         self.setLayout(root_layout)
 
-        # Menu bar (Windows-friendly shortcuts)
+        # Menu bar
         self.menu_bar = QMenuBar()
         root_layout.addWidget(self.menu_bar)
         self._build_menus()
 
-        self.toast_label = QLabel("")
-        self.toast_label.setVisible(False)
-        self.toast_label.setStyleSheet(
-            "background:#222;color:#fff;padding:6px 12px;border-radius:6px;font-size:10pt;"
-        )
-        root_layout.addWidget(self.toast_label)
+        # ── Header bar ──
+        header = QWidget()
+        header.setObjectName("headerBar")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 0, 16, 0)
+        header_layout.setSpacing(12)
 
-        # Tabs: Character Editor and Simulation
-        self.tabs = QTabWidget()
+        title_label = QLabel("⚔  AvaSim")
+        title_label.setObjectName("headerTitle")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
 
-        # Start button (centered) to jump to Character tab
-        start_row = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.setIcon(IconProvider.get_icon("play"))
-        self.start_button.setFixedWidth(140)
-        self.start_button.setToolTip("Go to Character setup")
-        self.start_button.clicked.connect(lambda: self.tabs.setCurrentWidget(self.character_tab_scroll))
+        self.start_button.setFixedWidth(100)
+        self.start_button.setToolTip("Focus character panel")
 
-        self.quickstart_button = QPushButton("Quick Start Duel")
+        self.quickstart_button = QPushButton("Quick Start")
         self.quickstart_button.setIcon(IconProvider.get_icon("sword"))
-        self.quickstart_button.setFixedWidth(160)
-        self.quickstart_button.setToolTip("Load sample characters and open Simulation")
+        self.quickstart_button.setFixedWidth(120)
+        self.quickstart_button.setToolTip("Load sample characters")
         self.quickstart_button.clicked.connect(self._apply_quickstart)
 
-        self.reload_button = QPushButton("Reload last setup")
+        self.reload_button = QPushButton("Reload")
         self.reload_button.setIcon(IconProvider.get_icon("refresh"))
-        self.reload_button.setFixedWidth(160)
-        self.reload_button.setToolTip("Re-apply the last saved settings and templates")
+        self.reload_button.setFixedWidth(100)
+        self.reload_button.setToolTip("Reload last saved settings")
         self.reload_button.clicked.connect(self._reload_last_setup)
-        start_row.addStretch()
-        start_row.addWidget(self.start_button)
-        start_row.addWidget(self.quickstart_button)
-        start_row.addWidget(self.reload_button)
-        start_row.addStretch()
-        root_layout.addLayout(start_row)
-        root_layout.addWidget(self.tabs)
 
-        # Character Editor Tab
-        self.character_tab = QWidget()
-        char_layout = QVBoxLayout()
-        char_layout.setContentsMargins(12, 12, 12, 12)
-        char_layout.setSpacing(10)
-        self.character_tab.setLayout(char_layout)
+        self.theme_toggle_btn = QPushButton()
+        self.theme_toggle_btn.setIcon(IconProvider.get_icon("moon"))
+        self.theme_toggle_btn.setObjectName("themeToggle")
+        self.theme_toggle_btn.setToolTip("Toggle dark/light theme")
+        self.theme_toggle_btn.clicked.connect(self._toggle_theme)
 
-        # Dynamic combatant editor list
+        for btn in (self.start_button, self.quickstart_button, self.reload_button):
+            header_layout.addWidget(btn)
+        header_layout.addWidget(self.theme_toggle_btn)
+        root_layout.addWidget(header)
+
+        self.toast_label = QLabel("")
+        self.toast_label.setVisible(False)
+        self.toast_label.setObjectName("toast")
+        root_layout.addWidget(self.toast_label)
+
+        # ══════════════════════════════════════════
+        #  MAIN CONTENT: Sidebar + Canvas
+        # ══════════════════════════════════════════
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setHandleWidth(2)
+
+        # ─── SIDEBAR ───
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sidebar_scroll.setObjectName("sidebarScroll")
+
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(8, 8, 8, 8)
+        sidebar_layout.setSpacing(6)
+
+        # ── Characters Section ──
+        char_section = CollapsibleSection("⚔  Characters")
+        char_content = QVBoxLayout()
+
         self.combatant_editors: list[CombatantEditor] = []
-        self.editors_layout = QHBoxLayout()
+        self.editors_layout = QVBoxLayout()
 
         self.attacker_editor = CombatantEditor("Character 1")
         self.attacker_editor.team_choice.setCurrentText("Team A")
@@ -938,7 +965,7 @@ class MainWindow(QWidget):
         self.combatant_editors = [self.attacker_editor, self.defender_editor]
         self.editors_layout.addWidget(self.attacker_editor)
         self.editors_layout.addWidget(self.defender_editor)
-        char_layout.addLayout(self.editors_layout)
+        char_content.addLayout(self.editors_layout)
 
         self.attacker_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
         self.defender_editor.name_input.textChanged.connect(self._refresh_scenario_preview)
@@ -950,117 +977,177 @@ class MainWindow(QWidget):
         ):
             combo.currentTextChanged.connect(self._update_action_availability)
 
-        # Add/remove combatant buttons
         combatant_btn_row = QHBoxLayout()
-        self.add_combatant_btn = QPushButton("+ Add Combatant")
+        self.add_combatant_btn = QPushButton("+ Add")
         self.add_combatant_btn.setIcon(IconProvider.get_icon("add"))
         self.add_combatant_btn.clicked.connect(self._add_combatant_editor)
-        self.add_combatant_btn.setToolTip("Add another combatant (up to 8)")
-        self.remove_combatant_btn = QPushButton("- Remove Last")
+        self.add_combatant_btn.setToolTip("Add combatant (max 8)")
+        self.remove_combatant_btn = QPushButton("- Remove")
         self.remove_combatant_btn.clicked.connect(self._remove_combatant_editor)
-        self.remove_combatant_btn.setToolTip("Remove last combatant (minimum 2)")
+        self.remove_combatant_btn.setToolTip("Remove last (min 2)")
         self.remove_combatant_btn.setEnabled(False)
         combatant_btn_row.addWidget(self.add_combatant_btn)
         combatant_btn_row.addWidget(self.remove_combatant_btn)
         combatant_btn_row.addStretch()
-        char_layout.addLayout(combatant_btn_row)
+        char_content.addLayout(combatant_btn_row)
 
         template_row = QHBoxLayout()
-        self.save_c1_btn = QPushButton("Save Character 1")
+        self.save_c1_btn = QPushButton("Save C1")
         self.save_c1_btn.setIcon(IconProvider.get_icon("save"))
         self.save_c1_btn.clicked.connect(lambda: self._save_template(self.attacker_editor))
-        self.load_c1_btn = QPushButton("Load Character 1")
+        self.load_c1_btn = QPushButton("Load C1")
         self.load_c1_btn.setIcon(IconProvider.get_icon("load"))
         self.load_c1_btn.clicked.connect(lambda: self._load_template(self.attacker_editor))
-        self.save_c2_btn = QPushButton("Save Character 2")
+        self.save_c2_btn = QPushButton("Save C2")
         self.save_c2_btn.setIcon(IconProvider.get_icon("save"))
         self.save_c2_btn.clicked.connect(lambda: self._save_template(self.defender_editor))
-        self.load_c2_btn = QPushButton("Load Character 2")
+        self.load_c2_btn = QPushButton("Load C2")
         self.load_c2_btn.setIcon(IconProvider.get_icon("load"))
         self.load_c2_btn.clicked.connect(lambda: self._load_template(self.defender_editor))
         for btn in (self.save_c1_btn, self.load_c1_btn, self.save_c2_btn, self.load_c2_btn):
             template_row.addWidget(btn)
-        template_row.addStretch()
-        char_layout.addLayout(template_row)
-        # Wrap Character tab in a scroll area to fit standard screen size
-        self.character_tab_scroll = QScrollArea()
-        self.character_tab_scroll.setWidgetResizable(True)
-        self.character_tab_scroll.setWidget(self.character_tab)
-        self.tabs.addTab(self.character_tab_scroll, "Character")
+        char_content.addLayout(template_row)
 
-        # Simulation Tab
-        self.simulation_tab = QWidget()
-        sim_layout = QVBoxLayout()
-        sim_layout.setContentsMargins(12, 12, 12, 12)
-        sim_layout.setSpacing(12)
-        self.simulation_tab.setLayout(sim_layout)
+        char_section.set_content_layout(char_content)
+        sidebar_layout.addWidget(char_section)
 
-        # Main simulation control
-        run_row = QHBoxLayout()
-        self.simulate_button = QPushButton("Run full combat")
-        self.simulate_button.setIcon(IconProvider.get_icon("play"))
-        self.simulate_button.clicked.connect(self.run_simulation)
-        self.simulate_button.setToolTip("Simulate the current setup (Ctrl+S to save setup)")
-        run_row.addWidget(self.simulate_button)
+        # ── Scenario Section ──
+        scenario_section = CollapsibleSection("🗺  Scenario", collapsed=True)
+        scenario_content = QVBoxLayout()
+        scenario_content.setSpacing(8)
 
-        self.batch_button = QPushButton("Run Batch Simulation")
-        self.batch_button.setIcon(IconProvider.get_icon("play"))
-        self.batch_button.clicked.connect(self._run_batch_simulation)
-        self.batch_button.setToolTip("Run N simulations and show win-rate statistics")
-        run_row.addWidget(self.batch_button)
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Map:"))
+        self.map_width_spin = QSpinBox()
+        self.map_width_spin.setRange(4, 40)
+        self.map_width_spin.setValue(self.scenario_width)
+        self.map_width_spin.setMaximumWidth(60)
+        size_row.addWidget(QLabel("W"))
+        size_row.addWidget(self.map_width_spin)
+        self.map_height_spin = QSpinBox()
+        self.map_height_spin.setRange(4, 40)
+        self.map_height_spin.setValue(self.scenario_height)
+        self.map_height_spin.setMaximumWidth(60)
+        size_row.addWidget(QLabel("H"))
+        size_row.addWidget(self.map_height_spin)
+        self.resize_map_button = QPushButton("Resize")
+        self.resize_map_button.setIcon(IconProvider.get_icon("refresh"))
+        self.resize_map_button.clicked.connect(self._resize_scenario_map)
+        size_row.addWidget(self.resize_map_button)
+        size_row.addStretch()
+        scenario_content.addLayout(size_row)
 
-        self.compare_button = QPushButton("Compare Loadouts")
-        self.compare_button.setIcon(IconProvider.get_icon("play"))
-        self.compare_button.clicked.connect(self._compare_loadouts)
-        self.compare_button.setToolTip(
-            "Run batch simulations on current setup, swap a weapon, run again, and compare results"
-        )
-        run_row.addWidget(self.compare_button)
-        run_row.addStretch()
-        sim_layout.addLayout(run_row)
+        tool_row = QHBoxLayout()
+        tool_row.addWidget(QLabel("Tool:"))
+        self.map_tool_combo = QComboBox()
+        self.map_tool_combo.addItems(["Paint Terrain", "Erase Terrain", "Place Character 1", "Place Character 2"])
+        self.map_tool_combo.setMinimumWidth(130)
+        tool_row.addWidget(self.map_tool_combo)
+        tool_row.addStretch()
+        scenario_content.addLayout(tool_row)
 
-        # Settings section
-        settings_group = QGroupBox("Simulation Settings")
-        settings_layout = QVBoxLayout()
-        settings_layout.setSpacing(10)
-        
-        # Row 1: Theme and Time
+        terrain_row = QHBoxLayout()
+        terrain_row.addWidget(QLabel("Terrain:"))
+        self.terrain_combo = QComboBox()
+        self.terrain_combo.addItems(["Normal", "Forest", "Water", "Mountain", "Road", "Wall"])
+        self.terrain_combo.setMinimumWidth(100)
+        terrain_row.addWidget(self.terrain_combo)
+        self.clear_terrain_button = QPushButton("Clear")
+        self.clear_terrain_button.setIcon(IconProvider.get_icon("delete"))
+        self.clear_terrain_button.clicked.connect(self._clear_scenario_terrain)
+        terrain_row.addWidget(self.clear_terrain_button)
+        terrain_row.addStretch()
+        scenario_content.addLayout(terrain_row)
+
+        overlay_row = QHBoxLayout()
+        overlay_row.addWidget(QLabel("Show:"))
+        self.overlay_source_combo = QComboBox()
+        self.overlay_source_combo.addItems(["None", "Character 1", "Character 2"])
+        self.overlay_source_combo.setMinimumWidth(100)
+        self.overlay_source_combo.setCurrentText("Character 1")
+        self.overlay_source_combo.currentIndexChanged.connect(self._refresh_scenario_preview)
+        overlay_row.addWidget(self.overlay_source_combo)
+        overlay_row.addStretch()
+        scenario_content.addLayout(overlay_row)
+
+        overlay_checks_row = QHBoxLayout()
+        self.overlay_range_check = QCheckBox("Range")
+        self.overlay_range_check.setChecked(True)
+        self.overlay_los_check = QCheckBox("LOS")
+        self.overlay_path_check = QCheckBox("Path")
+        self.overlay_path_check.setChecked(True)
+        for chk in (self.overlay_range_check, self.overlay_los_check, self.overlay_path_check):
+            chk.stateChanged.connect(self._refresh_scenario_preview)
+            overlay_checks_row.addWidget(chk)
+        overlay_checks_row.addStretch()
+        scenario_content.addLayout(overlay_checks_row)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(["Custom", "Duel", "Skirmish", "Siege", "2v2 Skirmish", "1v3 Ambush", "Free-for-All"])
+        self.preset_combo.setMinimumWidth(100)
+        preset_row.addWidget(self.preset_combo)
+        self.load_preset_button = QPushButton("Load")
+        self.load_preset_button.setIcon(IconProvider.get_icon("load"))
+        self.load_preset_button.clicked.connect(self._load_preset)
+        preset_row.addWidget(self.load_preset_button)
+        preset_row.addStretch()
+        scenario_content.addLayout(preset_row)
+
+        scenario_io_row = QHBoxLayout()
+        self.open_scenario_editor_button = QPushButton("Editor")
+        self.open_scenario_editor_button.setIcon(IconProvider.get_icon("edit"))
+        self.open_scenario_editor_button.clicked.connect(self._open_scenario_editor)
+        self.save_scenario_button = QPushButton("Save")
+        self.save_scenario_button.setIcon(IconProvider.get_icon("save"))
+        self.save_scenario_button.clicked.connect(self._save_scenario)
+        self.load_scenario_button = QPushButton("Load")
+        self.load_scenario_button.setIcon(IconProvider.get_icon("load"))
+        self.load_scenario_button.clicked.connect(self._load_scenario)
+        scenario_io_row.addWidget(self.open_scenario_editor_button)
+        scenario_io_row.addWidget(self.save_scenario_button)
+        scenario_io_row.addWidget(self.load_scenario_button)
+        scenario_io_row.addStretch()
+        scenario_content.addLayout(scenario_io_row)
+
+        scenario_section.set_content_layout(scenario_content)
+        sidebar_layout.addWidget(scenario_section)
+
+        # ── Settings Section ──
+        settings_section = CollapsibleSection("⚙  Settings")
+        settings_content = QVBoxLayout()
+        settings_content.setSpacing(8)
+
         env_row = QHBoxLayout()
         env_row.addWidget(QLabel("Theme:"))
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Dark", "Light"])
-        self.theme_combo.setMinimumWidth(110)
-        self.theme_combo.setMaximumWidth(150)
+        self.theme_combo.setMaximumWidth(100)
         self.theme_combo.setToolTip("Switch between dark and light themes")
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         env_row.addWidget(self.theme_combo)
-        
-        env_row.addSpacing(20)
-        env_row.addWidget(QLabel("Time of Day:"))
+        env_row.addWidget(QLabel("Time:"))
         self.time_combo = QComboBox()
         self.time_combo.addItems(["Day", "Night"])
-        self.time_combo.setMinimumWidth(110)
-        self.time_combo.setMaximumWidth(150)
+        self.time_combo.setMaximumWidth(80)
         self.time_combo.setToolTip("Apply day or night modifiers")
         self.time_combo.currentIndexChanged.connect(self._on_time_changed)
         env_row.addWidget(self.time_combo)
         env_row.addStretch()
-        settings_layout.addLayout(env_row)
-        
-        # Row 2: Surprise
+        settings_content.addLayout(env_row)
+
         surprise_row = QHBoxLayout()
         surprise_row.addWidget(QLabel("Surprise:"))
         self.surprise_combo = QComboBox()
         self.surprise_combo.addItems(["None", "Party Surprised", "Party Ambushes"])
-        self.surprise_combo.setMinimumWidth(150)
-        self.surprise_combo.setMaximumWidth(200)
+        self.surprise_combo.setMaximumWidth(160)
         self.surprise_combo.setToolTip("Apply surprise/ambush modifiers to initiative")
         self.surprise_combo.currentIndexChanged.connect(self._on_surprise_changed)
         surprise_row.addWidget(self.surprise_combo)
         surprise_row.addStretch()
-        settings_layout.addLayout(surprise_row)
-        
-        # Row 3: Mode
+        settings_content.addLayout(surprise_row)
+
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Mode:"))
         self.mode_combo = QComboBox()
@@ -1071,136 +1158,54 @@ class MainWindow(QWidget):
             "Full Simulation (Beta)",
             "Single Simulation (Beta)",
         ])
-        self.mode_combo.setMinimumWidth(200)
+        self.mode_combo.setMinimumWidth(160)
         self.mode_combo.setToolTip("Select player-controlled or beta auto modes")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo)
-        mode_row.addStretch()
-        settings_layout.addLayout(mode_row)
-        
-        # Preferences
-        prefs_row = QHBoxLayout()
+        settings_content.addLayout(mode_row)
+
         self.show_math_check = QCheckBox("Show decision notes")
         self.show_math_check.setToolTip("Include brief decision math/choices in the log")
-        prefs_row.addWidget(self.show_math_check)
-        prefs_row.addStretch()
-        settings_layout.addLayout(prefs_row)
+        settings_content.addWidget(self.show_math_check)
 
-        settings_group.setLayout(settings_layout)
-        sim_layout.addWidget(settings_group)
+        settings_section.set_content_layout(settings_content)
+        sidebar_layout.addWidget(settings_section)
 
-        # Scenario builder
-        scenario_group = QGroupBox("Scenario Builder")
-        scenario_layout = QVBoxLayout()
-        scenario_layout.setSpacing(8)
+        # ── Combat Controls Section ──
+        combat_section = CollapsibleSection("⚔  Combat Controls")
+        combat_content = QVBoxLayout()
+        combat_content.setSpacing(8)
 
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("Map size:"))
-        self.map_width_spin = QSpinBox()
-        self.map_width_spin.setRange(4, 40)
-        self.map_width_spin.setValue(self.scenario_width)
-        self.map_width_spin.setMaximumWidth(70)
-        size_row.addWidget(QLabel("W"))
-        size_row.addWidget(self.map_width_spin)
-        self.map_height_spin = QSpinBox()
-        self.map_height_spin.setRange(4, 40)
-        self.map_height_spin.setValue(self.scenario_height)
-        self.map_height_spin.setMaximumWidth(70)
-        size_row.addWidget(QLabel("H"))
-        size_row.addWidget(self.map_height_spin)
-        self.resize_map_button = QPushButton("Resize Map")
-        self.resize_map_button.setIcon(IconProvider.get_icon("refresh"))
-        self.resize_map_button.clicked.connect(self._resize_scenario_map)
-        size_row.addWidget(self.resize_map_button)
-        size_row.addStretch()
-        scenario_layout.addLayout(size_row)
+        self.simulate_button = QPushButton("Run Combat")
+        self.simulate_button.setIcon(IconProvider.get_icon("play"))
+        self.simulate_button.clicked.connect(self.run_simulation)
+        self.simulate_button.setToolTip("Simulate the current setup")
+        combat_content.addWidget(self.simulate_button)
 
-        tool_row = QHBoxLayout()
-        tool_row.addWidget(QLabel("Tool:"))
-        self.map_tool_combo = QComboBox()
-        self.map_tool_combo.addItems(["Paint Terrain", "Erase Terrain", "Place Character 1", "Place Character 2"])
-        self.map_tool_combo.setMinimumWidth(180)
-        tool_row.addWidget(self.map_tool_combo)
-        tool_row.addWidget(QLabel("Terrain:"))
-        self.terrain_combo = QComboBox()
-        self.terrain_combo.addItems(["Normal", "Forest", "Water", "Mountain", "Road", "Wall"])
-        self.terrain_combo.setMinimumWidth(140)
-        tool_row.addWidget(self.terrain_combo)
-        self.clear_terrain_button = QPushButton("Clear Terrain")
-        self.clear_terrain_button.setIcon(IconProvider.get_icon("delete"))
-        self.clear_terrain_button.clicked.connect(self._clear_scenario_terrain)
-        tool_row.addWidget(self.clear_terrain_button)
-        tool_row.addStretch()
-        scenario_layout.addLayout(tool_row)
+        self.batch_button = QPushButton("Batch Sim")
+        self.batch_button.setIcon(IconProvider.get_icon("chart"))
+        self.batch_button.clicked.connect(self._run_batch_simulation)
+        self.batch_button.setToolTip("Run N simulations and show win-rate statistics")
+        combat_content.addWidget(self.batch_button)
 
-        overlay_row = QHBoxLayout()
-        overlay_row.addWidget(QLabel("Overlays:"))
-        self.overlay_source_combo = QComboBox()
-        self.overlay_source_combo.addItems(["None", "Character 1", "Character 2"])
-        self.overlay_source_combo.setMinimumWidth(140)
-        self.overlay_source_combo.setCurrentText("Character 1")
-        self.overlay_source_combo.currentIndexChanged.connect(self._refresh_scenario_preview)
-        overlay_row.addWidget(self.overlay_source_combo)
-        self.overlay_range_check = QCheckBox("Range")
-        self.overlay_range_check.setChecked(True)
-        self.overlay_los_check = QCheckBox("LOS")
-        self.overlay_path_check = QCheckBox("Path Preview")
-        self.overlay_path_check.setChecked(True)
-        for chk in (self.overlay_range_check, self.overlay_los_check, self.overlay_path_check):
-            chk.stateChanged.connect(self._refresh_scenario_preview)
-            overlay_row.addWidget(chk)
-        overlay_row.addStretch()
-        scenario_layout.addLayout(overlay_row)
+        self.compare_button = QPushButton("Compare Loadouts")
+        self.compare_button.setIcon(IconProvider.get_icon("target"))
+        self.compare_button.clicked.connect(self._compare_loadouts)
+        self.compare_button.setToolTip(
+            "Run batch simulations on current setup, swap a weapon, run again, and compare results"
+        )
+        combat_content.addWidget(self.compare_button)
 
-        preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("Presets:"))
-        self.preset_combo = QComboBox()
-        self.preset_combo.addItems(["Custom", "Duel", "Skirmish", "Siege", "2v2 Skirmish", "1v3 Ambush", "Free-for-All"])
-        self.preset_combo.setMinimumWidth(140)
-        preset_row.addWidget(self.preset_combo)
-        self.load_preset_button = QPushButton("Load Preset")
-        self.load_preset_button.setIcon(IconProvider.get_icon("load"))
-        self.load_preset_button.clicked.connect(self._load_preset)
-        preset_row.addWidget(self.load_preset_button)
-        preset_row.addStretch()
-        scenario_layout.addLayout(preset_row)
-
-        scenario_io_row = QHBoxLayout()
-        self.open_scenario_editor_button = QPushButton("Open Editor")
-        self.open_scenario_editor_button.setIcon(IconProvider.get_icon("edit"))
-        self.open_scenario_editor_button.clicked.connect(self._open_scenario_editor)
-        scenario_io_row.addWidget(self.open_scenario_editor_button)
-        self.save_scenario_button = QPushButton("Save Scenario")
-        self.save_scenario_button.setIcon(IconProvider.get_icon("save"))
-        self.save_scenario_button.clicked.connect(self._save_scenario)
-        self.load_scenario_button = QPushButton("Load Scenario")
-        self.load_scenario_button.setIcon(IconProvider.get_icon("load"))
-        self.load_scenario_button.clicked.connect(self._load_scenario)
-        scenario_io_row.addWidget(self.save_scenario_button)
-        scenario_io_row.addWidget(self.load_scenario_button)
-        scenario_io_row.addStretch()
-        scenario_layout.addLayout(scenario_io_row)
-
-        scenario_group.setLayout(scenario_layout)
-        sim_layout.addWidget(scenario_group)
-        
-        # Initiative and player actions section
-        combat_group = QGroupBox("Combat State")
-        combat_layout = QVBoxLayout()
-        combat_layout.setSpacing(10)
-        
-        # Initiative
         initiative_row = QHBoxLayout()
-        initiative_row.addWidget(QLabel("Initiative Order:"))
-        self.initiative_label = QLabel("(run a simulation)")
+        initiative_row.addWidget(QLabel("Initiative:"))
+        self.initiative_label = QLabel("(run sim)")
         self.initiative_label.setStyleSheet("font-weight: bold;")
         initiative_row.addWidget(self.initiative_label)
         initiative_row.addStretch()
-        combat_layout.addLayout(initiative_row)
-        
-        # Player actions
+        combat_content.addLayout(initiative_row)
+
         player_action_row = QHBoxLayout()
-        player_action_row.addWidget(QLabel("Player actions:"))
+        player_action_row.addWidget(QLabel("Actions:"))
         self.player_action1_combo = QComboBox()
         self.player_action2_combo = QComboBox()
         for combo in (self.player_action1_combo, self.player_action2_combo):
@@ -1208,34 +1213,36 @@ class MainWindow(QWidget):
             combo.setToolTip("Player-selected action when in player-controlled mode")
         player_action_row.addWidget(self.player_action1_combo)
         player_action_row.addWidget(self.player_action2_combo)
-        player_action_row.addStretch()
-        combat_layout.addLayout(player_action_row)
-        
-        # Movement controls
+        combat_content.addLayout(player_action_row)
+
         move_row = QHBoxLayout()
-        move_row.addWidget(QLabel("Move to:"))
-        move_row.addWidget(QLabel("x:"))
+        move_row.addWidget(QLabel("Move:"))
+        move_row.addWidget(QLabel("x"))
         self.move_x = QSpinBox()
         self.move_x.setRange(0, 99)
-        self.move_x.setMaximumWidth(60)
+        self.move_x.setMaximumWidth(50)
         self.move_x.valueChanged.connect(self._update_move_preview)
         move_row.addWidget(self.move_x)
-        move_row.addWidget(QLabel("y:"))
+        move_row.addWidget(QLabel("y"))
         self.move_y = QSpinBox()
         self.move_y.setRange(0, 99)
-        self.move_y.setMaximumWidth(60)
+        self.move_y.setMaximumWidth(50)
         self.move_y.valueChanged.connect(self._update_move_preview)
         move_row.addWidget(self.move_y)
-        self.move_button = QPushButton("Move (Character 1)")
+        self.move_button = QPushButton("Go")
         self.move_button.setIcon(IconProvider.get_icon("arrow_right"))
-        move_row.addWidget(self.move_button)
         self.move_button.clicked.connect(self.move_attacker)
         self.move_button.setToolTip("Move Character 1 to the chosen coordinates")
+        move_row.addWidget(self.move_button)
         move_row.addStretch()
-        combat_layout.addLayout(move_row)
-        
-        combat_group.setLayout(combat_layout)
-        sim_layout.addWidget(combat_group)
+        combat_content.addLayout(move_row)
+
+        combat_section.set_content_layout(combat_content)
+        sidebar_layout.addWidget(combat_section)
+
+        sidebar_layout.addStretch()
+        sidebar_scroll.setWidget(sidebar)
+        self.main_splitter.addWidget(sidebar_scroll)
         
         self._set_player_controls_enabled(False)
         self.replay_snapshots: list[dict] = []
@@ -1247,49 +1254,101 @@ class MainWindow(QWidget):
         # initialize control state based on default mode
         self._on_mode_changed()
 
-        # Spell casting disabled; UI elements removed for now
+        # ─── MAIN CANVAS ───
+        canvas = QWidget()
+        canvas.setObjectName("mainCanvas")
+        canvas_layout = QVBoxLayout(canvas)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
 
-        log_row = QHBoxLayout()
-        left_col = QVBoxLayout()
-        right_col = QVBoxLayout()
+        self.canvas_splitter = QSplitter(Qt.Vertical)
+        self.canvas_splitter.setHandleWidth(3)
 
+        # ── Map Area ──
+        map_container = QWidget()
+        map_container.setObjectName("mapContainer")
+        map_layout = QVBoxLayout(map_container)
+        map_layout.setContentsMargins(8, 8, 8, 4)
+        map_layout.setSpacing(4)
+
+        self.tactical_map_widget = TacticalMapWidget(10, 10)
+        self.tactical_map_widget.setMinimumHeight(300)
+        self.tactical_map_widget.setMinimumWidth(400)
+        self.tactical_map_widget.set_interaction_handlers(
+            on_click=self._on_scenario_cell_clicked,
+            on_hover=self._on_scenario_cell_hover,
+        )
+        map_layout.addWidget(self.tactical_map_widget)
+
+        # Replay bar under map
+        replay_row = QHBoxLayout()
+        replay_row.setSpacing(6)
+        self.replay_prev = QPushButton()
+        self.replay_prev.setIcon(IconProvider.get_icon("arrow_left"))
+        self.replay_prev.setToolTip("Previous frame")
+        self.replay_prev.setFixedWidth(32)
+        self.replay_next = QPushButton()
+        self.replay_next.setIcon(IconProvider.get_icon("arrow_right"))
+        self.replay_next.setToolTip("Next frame")
+        self.replay_next.setFixedWidth(32)
+        self.replay_play = QPushButton()
+        self.replay_play.setIcon(IconProvider.get_icon("play"))
+        self.replay_play.setToolTip("Play/Pause replay")
+        self.replay_play.setFixedWidth(32)
+        self.replay_slider = QSlider(Qt.Horizontal)
+        self.replay_slider.setMinimum(0)
+        self.replay_slider.setMaximum(0)
+        self.replay_slider.setSingleStep(1)
+        replay_label = QLabel("Replay")
+        replay_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+        replay_row.addWidget(replay_label)
+        replay_row.addWidget(self.replay_prev)
+        replay_row.addWidget(self.replay_play)
+        replay_row.addWidget(self.replay_next)
+        replay_row.addWidget(self.replay_slider)
+        self.replay_slider.valueChanged.connect(self._on_replay_slider)
+        self.replay_prev.clicked.connect(lambda: self._step_replay(-1))
+        self.replay_next.clicked.connect(lambda: self._step_replay(1))
+        self.replay_play.clicked.connect(self._toggle_replay)
+        map_layout.addLayout(replay_row)
+
+        self.canvas_splitter.addWidget(map_container)
+
+        # ── Bottom Panel (tabbed logs, status, grid) ──
+        bottom_panel = QWidget()
+        bottom_panel.setObjectName("bottomPanel")
+        bottom_layout = QVBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(8, 4, 8, 8)
+        bottom_layout.setSpacing(4)
+
+        self.log_tabs = QTabWidget()
+        self.log_tabs.setObjectName("logTabs")
+
+        # Action Log tab
+        action_log_widget = QWidget()
+        action_log_layout = QVBoxLayout(action_log_widget)
+        action_log_layout.setContentsMargins(4, 4, 4, 4)
         self.action_view = QTextEdit()
         self.action_view.setReadOnly(True)
         self.action_view.setPlaceholderText("Turn-by-turn actions will appear here.")
         self.action_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.action_view.setMinimumHeight(240)
         self.collapse_log_check = QCheckBox("Collapse log runs")
         self.collapse_log_check.setToolTip("Combine repeated log lines into a single entry")
         self.collapse_log_check.stateChanged.connect(self._rerender_action_log)
-        left_col.addWidget(QLabel("Action Log"))
-        left_col.addWidget(self.collapse_log_check)
-        left_col.addWidget(self.action_view)
+        action_log_layout.addWidget(self.collapse_log_check)
+        action_log_layout.addWidget(self.action_view)
+        self.log_tabs.addTab(action_log_widget, "⚔ Action Log")
 
-        self.decision_toggle = QCheckBox("Show decision drawer")
-        self.decision_toggle.setChecked(False)
-        self.decision_toggle.stateChanged.connect(self._toggle_decision_drawer)
-        left_col.addWidget(self.decision_toggle)
-
-        self.decision_group = QGroupBox("Decision Math")
-        decision_layout = QVBoxLayout()
-        self.decision_view = QTextEdit()
-        self.decision_view.setReadOnly(True)
-        self.decision_view.setPlaceholderText("Decision math and AI reasoning will appear here.")
-        self.decision_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.decision_view.setMinimumHeight(140)
-        decision_layout.addWidget(self.decision_view)
-        self.decision_group.setLayout(decision_layout)
-        self.decision_group.setVisible(False)
-        left_col.addWidget(self.decision_group)
-
+        # Status tab
+        status_widget = QWidget()
+        status_layout = QVBoxLayout(status_widget)
+        status_layout.setContentsMargins(4, 4, 4, 4)
         self.status_view = QTextEdit()
         self.status_view.setReadOnly(True)
         self.status_view.setPlaceholderText("Status badges will appear here.")
         self.status_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.status_view.setMaximumHeight(110)
-        self.status_view.setMinimumHeight(70)
-        left_col.addWidget(QLabel("Statuses"))
-        left_col.addWidget(self.status_view)
+        self.status_view.setMaximumHeight(130)
+        status_layout.addWidget(self.status_view)
 
         bars_group = QGroupBox("HP / Armor")
         bars_layout = QGridLayout()
@@ -1301,7 +1360,6 @@ class MainWindow(QWidget):
         self.attacker_armor_bar.setRange(0, 3)
         self.attacker_armor_bar.setValue(0)
         self.attacker_armor_bar.setFormat("Character 1 Armor: %v/3")
-
         self.defender_hp_bar = QProgressBar()
         self.defender_hp_bar.setRange(0, 100)
         self.defender_hp_bar.setValue(0)
@@ -1310,7 +1368,6 @@ class MainWindow(QWidget):
         self.defender_armor_bar.setRange(0, 3)
         self.defender_armor_bar.setValue(0)
         self.defender_armor_bar.setFormat("Character 2 Armor: %v/3")
-
         bars_layout.addWidget(self.attacker_hp_bar, 0, 0)
         bars_layout.addWidget(self.attacker_armor_bar, 1, 0)
         bars_layout.addWidget(self.defender_hp_bar, 2, 0)
@@ -1318,82 +1375,57 @@ class MainWindow(QWidget):
         bars_group.setLayout(bars_layout)
         self._combat_bars_layout = bars_layout
         self._extra_combat_bars = []
-        left_col.addWidget(bars_group)
+        status_layout.addWidget(bars_group)
+        self.log_tabs.addTab(status_widget, "📊 Status")
 
+        # Map Log tab
         self.map_view = QTextEdit()
         self.map_view.setReadOnly(True)
         self.map_view.setPlaceholderText("Post-turn maps will appear here.")
         self.map_view.setLineWrapMode(QTextEdit.NoWrap)
-        self.map_view.setMinimumHeight(220)
-        
-        # Use enhanced tactical map widget instead of basic graphics view
-        self.tactical_map_widget = TacticalMapWidget(10, 10)
-        self.tactical_map_widget.setFixedHeight(220)
-        self.tactical_map_widget.setMinimumWidth(300)
-        self.tactical_map_widget.set_interaction_handlers(
-            on_click=self._on_scenario_cell_clicked,
-            on_hover=self._on_scenario_cell_hover,
-        )
-        
+        self.log_tabs.addTab(self.map_view, "🗺 Map Log")
+
+        # Map Grid tab
         self.map_grid = QTableWidget(10, 10)
-        self.map_grid.setFixedHeight(200)
-        self.map_grid.setMinimumWidth(300)
+        self.map_grid.setMinimumWidth(200)
         self.map_grid.horizontalHeader().setVisible(False)
         self.map_grid.verticalHeader().setVisible(False)
         self.map_grid.setEditTriggers(QTableWidget.NoEditTriggers)
         self.map_grid.setSelectionMode(QTableWidget.NoSelection)
         self.map_grid.setShowGrid(True)
-        self.map_grid.setToolTip("Map grid (last state)")
         for c in range(10):
             self.map_grid.setColumnWidth(c, 28)
         for r in range(10):
             self.map_grid.setRowHeight(r, 24)
-        right_col.addWidget(QLabel("Map Log"))
-        right_col.addWidget(self.map_view)
-        right_col.addWidget(QLabel("Visual Map"))
-        right_col.addWidget(self.tactical_map_widget)
-        right_col.addWidget(QLabel("Map Grid"))
-        right_col.addWidget(self.map_grid)
-        legend = QLabel("Legend: initials = unit, green = active, red = target, overlays = range/LOS, arrows = path")
-        # Legend will inherit color from theme stylesheet (no hardcoded color)
-        legend.setStyleSheet("font-size: 10pt; padding: 4px;")
-        right_col.addWidget(legend)
+        self.log_tabs.addTab(self.map_grid, "Grid")
 
-        replay_row = QHBoxLayout()
-        self.replay_prev = QPushButton()
-        self.replay_prev.setIcon(IconProvider.get_icon("arrow_left"))
-        self.replay_prev.setToolTip("Previous frame")
-        self.replay_next = QPushButton()
-        self.replay_next.setIcon(IconProvider.get_icon("arrow_right"))
-        self.replay_next.setToolTip("Next frame")
-        self.replay_play = QPushButton()
-        self.replay_play.setIcon(IconProvider.get_icon("play"))
-        self.replay_play.setToolTip("Play/Pause replay")
-        self.replay_slider = QSlider(Qt.Horizontal)
-        self.replay_slider.setMinimum(0)
-        self.replay_slider.setMaximum(0)
-        self.replay_slider.setSingleStep(1)
-        replay_row.addWidget(QLabel("Replay:"))
-        replay_row.addWidget(self.replay_prev)
-        replay_row.addWidget(self.replay_play)
-        replay_row.addWidget(self.replay_next)
-        replay_row.addWidget(self.replay_slider)
-        # Wire up replay controls after widgets are created
-        self.replay_slider.valueChanged.connect(self._on_replay_slider)
-        self.replay_prev.clicked.connect(lambda: self._step_replay(-1))
-        self.replay_next.clicked.connect(lambda: self._step_replay(1))
-        self.replay_play.clicked.connect(self._toggle_replay)
-        right_col.addLayout(replay_row)
+        # Decisions tab
+        self.decision_view = QTextEdit()
+        self.decision_view.setReadOnly(True)
+        self.decision_view.setPlaceholderText("Decision math and AI reasoning will appear here.")
+        self.decision_view.setLineWrapMode(QTextEdit.NoWrap)
+        self.log_tabs.addTab(self.decision_view, "🧠 Decisions")
 
-        log_row.addLayout(left_col)
-        log_row.addLayout(right_col)
-        sim_layout.addLayout(log_row)
+        bottom_layout.addWidget(self.log_tabs)
 
-        # Wrap Simulation tab in a scroll area to fit standard screen size
-        self.simulation_tab_scroll = QScrollArea()
-        self.simulation_tab_scroll.setWidgetResizable(True)
-        self.simulation_tab_scroll.setWidget(self.simulation_tab)
-        self.tabs.addTab(self.simulation_tab_scroll, "Simulation")
+        self.canvas_splitter.addWidget(bottom_panel)
+        self.canvas_splitter.setStretchFactor(0, 3)
+        self.canvas_splitter.setStretchFactor(1, 2)
+
+        canvas_layout.addWidget(self.canvas_splitter)
+        self.main_splitter.addWidget(canvas)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([340, 940])
+
+        root_layout.addWidget(self.main_splitter)
+
+        # Decision drawer compat (hidden, kept for method references)
+        self.decision_toggle = QCheckBox("Show decision drawer")
+        self.decision_toggle.setChecked(False)
+        self.decision_toggle.stateChanged.connect(self._toggle_decision_drawer)
+        self.decision_group = QGroupBox("Decision Math")
+        self.decision_group.setVisible(False)
 
         self._load_settings()
         self._apply_theme()
@@ -1618,7 +1650,6 @@ class MainWindow(QWidget):
             if hasattr(self, "preset_combo"):
                 self.preset_combo.setCurrentText("Duel")
         self._on_mode_changed()
-        self.tabs.setCurrentWidget(self.simulation_tab_scroll)
         self._apply_theme()
         self._save_settings()
 
@@ -2310,7 +2341,12 @@ class MainWindow(QWidget):
         self.action_view.setHtml(self._render_action_log(lines))
 
     def _toggle_decision_drawer(self) -> None:
-        self.decision_group.setVisible(self.decision_toggle.isChecked())
+        # In the new layout, decisions are always in a tab. Toggle switches to that tab.
+        if hasattr(self, "log_tabs") and self.decision_toggle.isChecked():
+            for i in range(self.log_tabs.count()):
+                if "Decision" in self.log_tabs.tabText(i):
+                    self.log_tabs.setCurrentIndex(i)
+                    break
 
     def _log_decision(self, engine: AvaCombatEngine, message: str) -> None:
         if not self.show_math_check.isChecked():
@@ -2853,6 +2889,12 @@ class MainWindow(QWidget):
                 self.tactical_map_widget.set_theme_colors("#2d2d2d", "#555555")
             else:
                 self.tactical_map_widget.set_theme_colors("#f0ede6", "#999999")
+
+        # Update theme toggle button icon
+        if hasattr(self, "theme_toggle_btn"):
+            is_dark = self.theme_manager.current_theme == Theme.DARK
+            icon_name = "moon" if is_dark else "sun"
+            self.theme_toggle_btn.setIcon(IconProvider.get_icon(icon_name))
 
     def _render_initiative(self, engine: AvaCombatEngine) -> None:
         if not engine.turn_order:

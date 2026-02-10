@@ -63,72 +63,100 @@ class FontConfig:
         font = QFont()
         
         if style == "default":
-            font.setFamily("Segoe UI")
+            font.setFamilies(["Inter", "SF Pro Display", "Segoe UI", "Helvetica Neue"])
             font.setPointSize(size)
         elif style == "heading":
-            font.setFamily("Segoe UI")
+            font.setFamilies(["Inter", "SF Pro Display", "Segoe UI", "Helvetica Neue"])
             font.setPointSize(size)
             font.setBold(True)
         elif style == "subheading":
-            font.setFamily("Segoe UI")
+            font.setFamilies(["Inter", "SF Pro Display", "Segoe UI", "Helvetica Neue"])
             font.setPointSize(size)
             font.setWeight(600)
         elif style == "monospace":
-            font.setFamily("Courier New")
+            font.setFamilies(["JetBrains Mono", "Cascadia Code", "SF Mono", "Courier New"])
             font.setPointSize(size)
             font.setStyleStrategy(QFont.PreferAntialias)
         elif style == "small":
-            font.setFamily("Segoe UI")
+            font.setFamilies(["Inter", "SF Pro Display", "Segoe UI", "Helvetica Neue"])
             font.setPointSize(size)
         
         return font
 
 
+def _safe_icon(primary: str, fallback: str = "") -> QIcon:
+    """Try to create a qtawesome icon, falling back gracefully."""
+    try:
+        return qta.icon(primary)
+    except Exception:
+        if fallback:
+            try:
+                return qta.icon(fallback)
+            except Exception:
+                pass
+        return QIcon()
+
+
 class IconProvider:
     """Provides Font Awesome icons with theming support."""
     
-    # Icon definitions for common UI elements
-    ICONS = {
-        "play": qta.icon("fa.play"),
-        "pause": qta.icon("fa.pause"),
-        "stop": qta.icon("fa.stop"),
-        "settings": qta.icon("fa.cog"),
-        "save": qta.icon("fa.save"),
-        "load": qta.icon("fa.folder-open"),
-        "export": qta.icon("fa.arrow-circle-o-up"),
-        "add": qta.icon("fa.plus"),
-        "delete": qta.icon("fa.trash-o"),
-        "edit": qta.icon("fa.pencil"),
-        "copy": qta.icon("fa.copy"),
-        "undo": qta.icon("fa.undo"),
-        "redo": qta.icon("fa.repeat"),
-        "search": qta.icon("fa.search"),
-        "refresh": qta.icon("fa.refresh"),
-        "info": qta.icon("fa.info-circle"),
-        "warning": qta.icon("fa.warning"),
-        "error": qta.icon("fa.times-circle"),
-        "success": qta.icon("fa.check-circle"),
-        "arrow_up": qta.icon("fa.arrow-up"),
-        "arrow_down": qta.icon("fa.arrow-down"),
-        "arrow_left": qta.icon("fa.arrow-left"),
-        "arrow_right": qta.icon("fa.arrow-right"),
-        "menu": qta.icon("fa.bars"),
-        "close": qta.icon("fa.times"),
-        "star": qta.icon("fa.star"),
-        "heart": qta.icon("fa.heart"),
-        "shield": qta.icon("fa.shield"),
-        "sword": qta.icon("fa.shield"),
-        "person": qta.icon("fa.user"),
-        "users": qta.icon("fa.users"),
-        "map": qta.icon("fa.map"),
-        "fire": qta.icon("fa.fire"),
-        "zap": qta.icon("fa.bolt"),
+    # Icon definitions — lazy loaded to avoid warning before QApplication exists
+    _ICON_DEFS = {
+        "play": ("fa6s.play", "fa.play"),
+        "pause": ("fa6s.pause", "fa.pause"),
+        "stop": ("fa6s.stop", "fa.stop"),
+        "settings": ("fa6s.gear", "fa.cog"),
+        "save": ("fa6s.floppy-disk", "fa.save"),
+        "load": ("fa6s.folder-open", "fa.folder-open"),
+        "export": ("fa6s.arrow-up-from-bracket", "fa.arrow-circle-o-up"),
+        "add": ("fa6s.plus", "fa.plus"),
+        "delete": ("fa6s.trash-can", "fa.trash-o"),
+        "edit": ("fa6s.pen", "fa.pencil"),
+        "copy": ("fa6s.copy", "fa.copy"),
+        "undo": ("fa6s.rotate-left", "fa.undo"),
+        "redo": ("fa6s.rotate-right", "fa.repeat"),
+        "search": ("fa6s.magnifying-glass", "fa.search"),
+        "refresh": ("fa6s.arrows-rotate", "fa.refresh"),
+        "info": ("fa6s.circle-info", "fa.info-circle"),
+        "warning": ("fa6s.triangle-exclamation", "fa.warning"),
+        "error": ("fa6s.circle-xmark", "fa.times-circle"),
+        "success": ("fa6s.circle-check", "fa.check-circle"),
+        "arrow_up": ("fa6s.arrow-up", "fa.arrow-up"),
+        "arrow_down": ("fa6s.arrow-down", "fa.arrow-down"),
+        "arrow_left": ("fa6s.arrow-left", "fa.arrow-left"),
+        "arrow_right": ("fa6s.arrow-right", "fa.arrow-right"),
+        "menu": ("fa6s.bars", "fa.bars"),
+        "close": ("fa6s.xmark", "fa.times"),
+        "star": ("fa6s.star", "fa.star"),
+        "heart": ("fa6s.heart", "fa.heart"),
+        "shield": ("fa6s.shield-halved", "fa.shield"),
+        "sword": ("fa6s.hand-fist", "fa.shield"),
+        "person": ("fa6s.user", "fa.user"),
+        "users": ("fa6s.users", "fa.users"),
+        "map": ("fa6s.map", "fa.map"),
+        "fire": ("fa6s.fire", "fa.fire"),
+        "zap": ("fa6s.bolt", "fa.bolt"),
+        "sun": ("fa6s.sun", "fa.sun-o"),
+        "moon": ("fa6s.moon", "fa.moon-o"),
+        "dice": ("fa6s.dice-d20", "fa.cube"),
+        "chart": ("fa6s.chart-bar", "fa.bar-chart"),
+        "expand": ("fa6s.chevron-down", "fa.chevron-down"),
+        "collapse": ("fa6s.chevron-right", "fa.chevron-right"),
+        "target": ("fa6s.crosshairs", "fa.crosshairs"),
+        "skull": ("fa6s.skull", "fa.times"),
     }
+    _cache: dict[str, QIcon] = {}
     
     @staticmethod
     def get_icon(name: str) -> QIcon:
-        """Get an icon by name."""
-        return IconProvider.ICONS.get(name, QIcon())
+        """Get an icon by name (lazy-loaded to avoid QApplication warning)."""
+        if name not in IconProvider._cache:
+            defs = IconProvider._ICON_DEFS.get(name)
+            if defs:
+                IconProvider._cache[name] = _safe_icon(defs[0], defs[1])
+            else:
+                IconProvider._cache[name] = QIcon()
+        return IconProvider._cache[name]
 
 
 class ThemeManager:
@@ -514,6 +542,143 @@ class ThemeManager:
             border: none;
             border-right: 1px solid {colors['border']};
             border-bottom: 1px solid {colors['border']};
+        }}
+        
+        /* Progress Bars */
+        QProgressBar {{
+            background-color: {colors['bg_secondary']};
+            border: 1px solid {colors['border']};
+            border-radius: 4px;
+            text-align: center;
+            height: 16px;
+            font-size: 9pt;
+            color: {colors['text_primary']};
+        }}
+        
+        QProgressBar::chunk {{
+            background-color: {colors['accent']};
+            border-radius: 3px;
+        }}
+        
+        /* Splitter handles */
+        QSplitter::handle {{
+            background-color: {colors['border']};
+        }}
+        
+        QSplitter::handle:horizontal {{
+            width: 2px;
+        }}
+        
+        QSplitter::handle:vertical {{
+            height: 3px;
+        }}
+        
+        QSplitter::handle:hover {{
+            background-color: {colors['accent']};
+        }}
+        
+        /* Scroll Area */
+        QScrollArea {{
+            background-color: {colors['bg_primary']};
+            border: none;
+        }}
+        
+        /* Header Bar */
+        QWidget#headerBar {{
+            background-color: {colors['bg_secondary']};
+            border-bottom: 2px solid {colors['accent']};
+            min-height: 44px;
+            max-height: 44px;
+        }}
+        
+        QLabel#headerTitle {{
+            font-size: 16pt;
+            font-weight: bold;
+            color: {colors['accent']};
+            background-color: transparent;
+        }}
+        
+        /* Sidebar */
+        QWidget#sidebar {{
+            background-color: {colors['bg_primary']};
+        }}
+        
+        QScrollArea#sidebarScroll {{
+            background-color: {colors['bg_primary']};
+            border-right: 1px solid {colors['border']};
+        }}
+        
+        /* Collapsible Section Header */
+        QPushButton#collapsibleHeader {{
+            background-color: {colors['bg_tertiary']};
+            color: {colors['accent']};
+            border: 1px solid {colors['border']};
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-weight: 700;
+            font-size: 11pt;
+            text-align: left;
+            min-height: 28px;
+        }}
+        
+        QPushButton#collapsibleHeader:hover {{
+            background-color: {colors['accent']};
+            color: {colors['bg_primary']};
+        }}
+        
+        QPushButton#collapsibleHeader:checked {{
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+        
+        QWidget#collapsibleContent {{
+            background-color: {colors['bg_secondary']};
+            border: 1px solid {colors['border']};
+            border-top: none;
+            border-bottom-left-radius: 6px;
+            border-bottom-right-radius: 6px;
+        }}
+        
+        /* Theme toggle button */
+        QPushButton#themeToggle {{
+            background-color: transparent;
+            border: 1px solid {colors['border']};
+            border-radius: 18px;
+            padding: 4px;
+            min-width: 36px;
+            max-width: 36px;
+            min-height: 36px;
+            max-height: 36px;
+        }}
+        
+        QPushButton#themeToggle:hover {{
+            background-color: {colors['bg_tertiary']};
+            border: 1px solid {colors['accent']};
+        }}
+        
+        /* Toast notification */
+        QLabel#toast {{
+            background-color: {colors['bg_tertiary']};
+            color: {colors['text_primary']};
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 10pt;
+            border: 1px solid {colors['accent']};
+        }}
+        
+        /* Main canvas */
+        QWidget#mainCanvas {{
+            background-color: {colors['bg_primary']};
+        }}
+        
+        /* Map container */
+        QWidget#mapContainer {{
+            background-color: {colors['bg_primary']};
+        }}
+        
+        /* Log tabs (compact) */
+        QTabWidget#logTabs {{
+            background-color: {colors['bg_primary']};
         }}
         """
         

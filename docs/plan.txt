@@ -1,6 +1,6 @@
 ================================================================================
   AVASIM - DEVELOPMENT PLAN & NEXT STEPS
-  Last updated: 2025-02-09
+  Last updated: 2025-02-10
 ================================================================================
 
 What is Built (current state)
@@ -13,218 +13,231 @@ What is Built (current state)
 [x] 3 armor types + 2 shield types with soak / block mechanics
     (fixed: medium armor 1d4-1, heavy armor 1d4 per rules)
 [x] 52 feats defined in data; ALL have engine implementations
-    (Dual Striker, Volley, Bastion Stance, Hamstring, Quickdraw, Galestorm,
-     Fanning Blade, Trick Shot, Two Birds One Stone, Piercing Strike,
-     Hilt Strike, Rangers Gambit, Momentum, Feint, Whirling Devil,
-     Riposte, Shield Bash, Rousing/Commanding Inspiration, Second Wind,
-     Lacuna, Harmonized Arsenal, First Strike, Skirmishing Party,
-     LW: Elemental, LW: Flexible Design, LW: Mastery, etc.)
 [x] Full spellcasting system - 20 spells across 6 disciplines (Force,
-    Ichor, Cursesmithy, Ether, Artifice, Tellurgy); spell saves, AOE,
-    status effects, damage types, overcast consequence table
-[x] 10x10 tactical map with terrain (wall, forest, water, elevation),
-    occupant tracking, pathfinding-aware movement, dash, vault
-[x] PySide6 desktop GUI - combatant editor, equipment/feat picker, 3 sim
-    modes, scenario presets, save/load, day/night toggle
-[x] Visual tile map (TacticalMapWidget via QGraphicsView) with overlays,
-    legend, click/hover interaction
+    Ichor, Cursesmithy, Ether, Artifice, Tellurgy)
+[x] 10x10 tactical map with terrain, pathfinding, dash, vault
+[x] PySide6 desktop GUI with combatant editor, equipment/feat picker,
+    3 sim modes, scenario presets, save/load, day/night toggle
+[x] TacticalMapWidget (QGraphicsView) with overlays, legend, click/hover,
+    scroll-wheel zoom, selection highlights, attack flash animation,
+    theme-aware tile colors, rich occupant tooltips
 [x] Action replay slider with per-action snapshots
 [x] Decision-math drawer (AI transparency toggle)
-[x] Initiative display + turn tracker in UI
-[x] HP/Armor progress bars, status badges panel
+[x] Initiative display + turn tracker
+[x] HP/Armor/Anima progress bars, status badges panel with full chips
+    (Bastion, Flowing Stance, Inspired, Critical/skull, death saves,
+    weapon/armor labels, all StatusEffect enums)
 [x] Log collapsing + colorized action log
 [x] Export: HTML + CSV log export
 [x] Scenario editor dialog (place units/terrain, save/load JSON)
-[x] Unit tests for combat mechanics and tactical map
+[x] Standalone CombatAI module with 4 strategies (aggressive, defensive,
+    balanced, random) and EV-based decision making
+[x] Multi-combatant support (up to 8 combatants, team assignment)
+[x] Batch simulation with matplotlib charts + loadout comparison
+[x] Feat picker with checkboxes, description tooltips, and requirement
+    display in CombatantEditor
+[x] Equipment stat-requirement warnings (real-time validation)
+[x] Block disabled when no shield equipped (input guardrail)
+[x] Expanded Quick Start dialog explaining all simulation modes
+[x] Dark/Light theme system (ui/theme.py, ThemeManager, QSS generation)
+[x] Unit tests for combat, AI, and tactical map
 
 
 ================================================================================
-  PHASE 1 - Rules Fidelity and Engine Completeness     [COMPLETED]
+  COMPLETED PHASES
 ================================================================================
 
-1.1  Finish remaining feat implementations
-     Status: ~20 feats are defined but have no engine action_ method yet.
-     Tasks:
-     - Aberration Slayer: apply +1 damage vs chosen creature_type in
-       perform_attack (check target tag)
-     - Backline Flanker: hook into perform_attack; if hidden and target
-       adjacent to ally, +1 dmg; on miss, set conceal penalty bypass flag
-     - Combat Acrobat: action_vault exists, verify it sets evade state
-     - Control: after polearm/greatsword/large-shield hit, trigger push
-       + wall-pin bonus
-     - Dueling Stance: modify evade graze path; if single one-hand sword,
-       allow Parry (weapon roll -1) to deflect; buff +1 dmg next turn
-     - Evasive Tactics: gate death-save triggers while critical
-     - Deaths Dance: one free action per turn without death save while
-       critical
-     - Forward Charge: after landing heavy weapon hit, Topple/Shove
-       cannot be evaded/blocked, +3 block free move
-     - Lineage Weapon tree (Elemental, Flexible Design, Mastery, Questing
-       Bane): defined in feats.py but have zero engine wiring
-     - Mighty Strike: knockback on qualifying weapon hits
-     - Patient Flow: flowing stance redirect logic
-     - Quickfooted: free 2-block movement after full evade (partially
-       done with evasion bonus; movement part missing)
-     - Rakish Combination: next-unarmed buff after landing unarmed
-     - Reactive Stance: free maneuver on unarmed evade
-     - Sentinel: polearm + shield combo, polearm retaliation on block
-     - Shield Wall: adjacency detection for +1 bonuses
-     - Shieldmaster: +3 block bonus vs specific weapon types
-     - Skirmishing Party: pre-combat stealth/initiative buff (hook only)
-     - Steadfast Defender: opportunity attack on enemy enter/exit range
-     - Strategic Archer: elevation +1 damage check
-     - Vicious Mockery: debuff action (-1 stacking to -3)
-     - Harmonized Arsenal: action_throw_small_blade exists, verify +1 aim
-
-1.2  Expand the spellcasting system
-     Status: Only 3 spells exist; overcasting consequence table is stubbed.
-     Tasks:
-     - Add spells for all 6 disciplines (Ichor, Cursesmithy, Ether,
-       Artifice, Force, Tellurgy) - at least 3 per discipline
-     - Implement the overcast consequence table (roll 1d6, apply effects
-       from mild to severe)
-     - Add miscast penalty application (half Anima lost, no effect)
-     - Implement spell save/resistance rolls for targeted spells
-       (target rolls STR:Fortitude or DEX:Acrobatics vs spell DC)
-     - Support spell damage types (fire, ice, lightning, acid, force,
-       psychic) and future resistance/vulnerability hooks
-     - Wire spellcasting into AI decision-making so computer-controlled
-       mages actually use spells
-     - Add UI spell picker: spell list per combatant, Anima display,
-       cast button
-
-1.3  Weapon stat corrections
-     Status: items.py weapon stats partially diverge from the authoritative
-     rules in avalore_rules_feats_and_items.txt.
-     Tasks:
-     - Audit every weapon against the rules doc and fix damage, accuracy,
-       actions_required, traits (piercing, bypass-graze, etc.)
-     - Notable corrections needed:
-       * Arming Sword: rules say +1 to hit, 4 dmg - verify match
-       * Polearm: rules say +2 to hit, 6 dmg, pierces armor - verify
-       * Mace: rules say +1 to hit, 3 dmg, +2 vs medium/heavy armor
-       * Staff: rules say +2 to hit, 5 dmg, 2 actions, bypasses graze
-       * Small Weapon: rules say +3 to hit, 3 dmg
-       * Finesse Blade: rules say +3 to hit, 3 dmg, +1 vs unarmored,
-         bypasses graze
-       * Whip: rules say +3 to hit, 3 dmg, +1 vs unarmored, bypasses
-         graze, 0 dmg vs heavy armor
-       * Meteor Hammer: rules say +2 to hit, 3 dmg, +1 vs medium/heavy
-       * Recurve Bow: rules say +2 to hit, 3 dmg, 1 action, bypasses
-         graze, +1 vs unarmored
-       * Crossbow: rules say +3 to hit, 5 dmg, 2 actions, pierces armor
-       * Longbow: rules say +3 to hit, 6 dmg, 2 actions
-       * Spellbook: rules say +3 to hit, 4 dmg, 2 actions, pierces armor
-     - Add weapon traits: bypasses_graze, bonus_vs_unarmored,
-       bonus_vs_medium_heavy, zero_vs_heavy, hidden_on_miss
-
-1.4  Armor stat corrections
-     Status: The rules doc shows different soak formulas than what may
-     be implemented.
-     Tasks:
-     - Light armor: 1d2-1 (0 or 1) - verify
-     - Medium armor: 1d4-1 (0 to 3) - rules doc says 1d4-1, current
-       code may use 1d3-1; reconcile
-     - Heavy armor: 1d4 (1 to 4) - rules doc says 1d4, current code
-       may use 1d3; reconcile
-     - Ensure stat requirements are enforced in character creation UI
-       and produce warnings
+  Phase 1 - Rules Fidelity and Engine Completeness     [COMPLETED]
+  Phase 2 - AI and Simulation Depth                    [COMPLETED]
+  Phase 3 - UI Polish and User Experience              [COMPLETED]
 
 
 ================================================================================
-  PHASE 2 - AI and Simulation Depth                    (HIGH PRIORITY)
+  PHASE 4 - VISUAL OVERHAUL (UI UPGRADE)               ★ NEXT UP ★
 ================================================================================
 
-2.1  Extract AI into its own module
-     Status: AI logic is currently embedded in the MainWindow class at
-     the bottom of pyside_app.py (~400+ lines of decision code). It is
-     not reusable, testable, or importable independently.
-     Tasks:
-     - Create combat/ai.py with a CombatAI class
-     - Move all decision logic (_choose_action, _plan_turn, _choose_stance,
-       EV calculations, reachable tiles, range management) into it
-     - Give CombatAI a clean interface: decide_turn(engine, participant)
-       returning a list of actions
-     - Support pluggable AI strategies (aggressive, defensive, balanced,
-       random) via subclass or config
-     - Add unit tests for AI decision-making
+  Goal: Transform AvaSim from "functional Python app" into something that
+  looks and feels like a polished indie tool. Every surface the user sees
+  should feel intentional, spatial, and satisfying to interact with.
 
-2.2  Multi-combatant support
-     Status: The UI is hard-coded for exactly 2 combatants (Character 1
-     vs Character 2). The engine already accepts a list of participants.
-     Tasks:
-     - Extend the UI to allow 3+ combatants (add/remove combatant buttons)
-     - Support team/faction assignment (e.g., Team A vs Team B)
-     - Update initiative display for N participants
-     - Update AI target selection for multi-target environments
-     - Add preset scenarios with 3+ combatants (e.g., 2v2 skirmish,
-       1v3 ambush, free-for-all)
+  -----------------------------------------------------------------------
+  4.1  Layout Architecture — Sidebar + Main Canvas
+  -----------------------------------------------------------------------
+  Status: Current layout is a flat QVBoxLayout → QTabWidget with two tabs
+  (Character, Simulation).  Everything feels stacked and cramped.
 
-2.3  Batch simulation / statistics mode
-     Tasks:
-     - Run N simulations button that runs 100-10,000 combats with the
-       same setup and collects win rates, average rounds, damage dealt
-     - Display results as a simple bar chart or table (matplotlib or
-       QChart)
-     - Allow comparing two loadouts side-by-side (What if Character 1
-       swaps to a Polearm? How does win rate change?)
+  Tasks:
+  - Replace the tab-based layout with a persistent sidebar + main content
+    area (QSplitter or custom layout)
+  - Sidebar sections: Characters, Scenario, Simulation Controls, Batch
+  - Main canvas area shows the tactical map prominently (occupies 60%+
+    of the window), with the action log in a collapsible bottom drawer
+  - Move the replay slider and transport controls (play/pause/step) into
+    a bottom toolbar bar that pins below the map
+  - Target minimum window: 1280×800; look good at 1920×1080
+  - Add a header/title bar area with the AvaSim logo, version, and the
+    theme toggle as an icon button (sun/moon)
+
+  -----------------------------------------------------------------------
+  4.2  Character Cards — Visual Redesign
+  -----------------------------------------------------------------------
+  Status: CombatantEditor is a tall vertical stack of QGroupBoxes with
+  raw QSpinBoxes. Status badges are inline HTML in a QTextEdit.
+
+  Tasks:
+  - Redesign CombatantEditor as a compact card with a dark header strip
+    showing name + team color dot
+  - Replace the grid of spin boxes for stats with a horizontal row of
+    circular "stat pips" or compact labeled badges (e.g., STR +2 | DEX +1)
+  - Equipment section: show weapon/armor as icon + label tiles instead of
+    raw combo boxes (keep the combo as the picker, but preview the result
+    as a styled tile)
+  - Feat section: show selected feats as small rounded chips/tags below
+    the equipment area rather than a scrollable checkbox list
+  - In-combat status card: render each combatant as a floating card
+    overlay on or beside the map showing HP bar, Anima bar, status
+    chips, equipped weapon icon, and a portrait placeholder
+  - Add subtle CSS drop shadows, rounded corners (12px), and consistent
+    spacing (8/12/16px rhythm) to all cards
+
+  -----------------------------------------------------------------------
+  4.3  Map Visual Upgrade
+  -----------------------------------------------------------------------
+  Status: TacticalMapWidget draws flat solid-color rectangles with 1px
+  gray borders. Terrain is distinguished only by fill color.
+
+  Tasks:
+  - Increase default cell size to 48×48 for more room
+  - Draw terrain with hatching/patterns instead of just fill color:
+      * Forest: green fill + subtle tree cross-hatch or small triangle
+      * Water: blue fill + horizontal wave lines
+      * Mountain: brown fill + small peak chevrons
+      * Wall: dark fill + brick-pattern cross-hatch
+      * Road: tan fill + center dashed line
+  - Draw unit tokens as colored circles (team-colored border, white fill,
+    bold 2-letter initials centered) instead of raw addText
+  - Active unit: animated pulsing border or glow ring
+  - Dead units: ghosted / semi-transparent token with X overlay
+  - Draw grid lines as thin dotted lines (#ccc) instead of solid
+  - Add subtle coordinate labels (A-J columns, 1-10 rows) on edges
+  - Support a "fog of war" dimming for tiles outside LOS
+  - On attack: brief particle-like scatter or radial flash (use
+    QGraphicsEllipseItem with opacity animation via QPropertyAnimation)
+
+  -----------------------------------------------------------------------
+  4.4  Action Log & Combat Feed Overhaul
+  -----------------------------------------------------------------------
+  Status: Combat log is a monospace QTextEdit with raw text lines.
+  TextHighlighter colorizes by keyword but output still looks like a
+  terminal dump.
+
+  Tasks:
+  - Replace the raw log with a styled "combat feed" widget:
+      * Each event is a card/row with an icon (⚔ attack, 🛡 block,
+        💨 move, 💀 death, ✨ feat) and colored left-border accent
+      * Dice results shown as inline mini-badges: [2d10: 7+4 = 11]
+      * Damage numbers in bold red, healing in bold green
+      * Round headers as full-width section dividers
+  - Add a mini-filter toolbar above the log: toggle visibility of
+    move events, dice details, AI reasoning
+  - Auto-scroll to newest event; dim older events slightly
+  - Keep the existing export (HTML/CSV) working with the new format
+
+  -----------------------------------------------------------------------
+  4.5  Replay & Timeline Bar
+  -----------------------------------------------------------------------
+  Status: Replay is a QSlider + three QPushButtons (Step Back, Play,
+  Step Forward).  No visual indication of what happened at each step.
+
+  Tasks:
+  - Replace the plain slider with a visual timeline strip:
+      * Small dots/pips for each snapshot, colored by event type
+        (red = damage, blue = move, green = heal/buff, gray = stance)
+      * Hover a pip to see a tooltip summary ("Round 2: Captain attacks
+        Brigand for 6 damage")
+  - Add a scrubbing thumbnail: as the user drags the slider, the map
+    live-updates (already works) but also show a 1-line caption below
+    the timeline describing the current action
+  - Playback speed selector (0.5×, 1×, 2×)
+
+  -----------------------------------------------------------------------
+  4.6  Typography and Iconography
+  -----------------------------------------------------------------------
+  Status: Fonts default to "Segoe UI" / "Courier New" via FontConfig.
+  Icons come from Font Awesome 4 via qtawesome. Many buttons have no
+  icon or use a generic one.
+
+  Tasks:
+  - Switch to a modern variable-weight font: Inter for UI text,
+    JetBrains Mono for log/code displays (bundle .ttf in assets/)
+  - Audit every button, menu item, and label for appropriate icons;
+    upgrade from FA4 to FA6 (qtawesome supports "fa6s.*" prefix)
+  - Add custom SVG weapon/armor icons (16×16) for the equipment
+    section: sword, shield, bow, staff, armor silhouettes
+  - Use emoji or FA6 icons consistently for status chips instead of
+    the current 3-letter codes (PRN, SLO, DIS → proper icons)
+  - Heading hierarchy: section titles 14pt bold accent color,
+    subsection 12pt semibold, body 11pt regular, caption 9pt dimmed
+
+  -----------------------------------------------------------------------
+  4.7  Theme System Upgrade
+  -----------------------------------------------------------------------
+  Status: ThemeManager generates one large QSS string. Two palettes
+  (DARK / LIGHT) exist with good color choices but the app looks
+  mostly the same in both modes because the map, status badges, and
+  progress bars use hard-coded colors.
+
+  Tasks:
+  - Audit every hard-coded QColor/hex in pyside_app.py and map_widget.py;
+    replace with palette lookups from ThemeManager
+  - Status badge HTML in _format_status_badges: use palette-derived
+    chip colors instead of hard-coded hex strings
+  - Progress bars (HP, Armor, Anima): use palette accent colors so they
+    shift with theme
+  - Toast notifications: theme-aware background
+  - Add a "High Contrast" theme variant for accessibility
+  - Persist theme choice in settings.json (partially done — wire the
+    load path so it restores on launch)
+
+  -----------------------------------------------------------------------
+  4.8  Micro-interactions and Animations
+  -----------------------------------------------------------------------
+  Status: AnimatedButton exists but is a stub (hover cursor change only).
+  StatusBadge has a pulse method but it's unused. No transitions exist.
+
+  Tasks:
+  - Button hover: subtle background-color transition (150ms ease)
+    using QPropertyAnimation or style-sheet transition
+  - Tab/panel switch: brief fade-in on the new content
+    (QGraphicsOpacityEffect)
+  - Status badge appear/disappear: scale-in from 0.8→1.0 (200ms)
+  - Simulation start: progress indicator smoothly fills while combat
+    runs; spinner icon on the Run button while processing
+  - Map zoom: smooth animated scale transition instead of instant jump
+  - Toast notifications: slide-in from top, auto-fade after 3s
+  - Turn transition: brief "Round N" banner overlay that fades out
+
+  -----------------------------------------------------------------------
+  4.9  Responsive and Resizable Layout
+  -----------------------------------------------------------------------
+  Status: Window has setMinimumSize(1000, 700) but content doesn't
+  gracefully reflow at larger sizes — the map stays tiny and text
+  areas consume excess space.
+
+  Tasks:
+  - Use QSplitter for map vs. sidebar so user can drag to resize
+  - Map should expand to fill available space (remove setFixedHeight)
+  - Character cards: 2-column grid at wide widths, single column at
+    narrow widths (or use a QFlowLayout equivalent)
+  - Log panel: collapsible with a drag handle or toggle button
+  - Test at 1280×800, 1920×1080, and 2560×1440; ensure nothing clips
 
 
 ================================================================================
-  PHASE 3 - UI Polish and User Experience              (MEDIUM PRIORITY)
+  PHASE 5 - Scenario and Content                       (AFTER UI UPGRADE)
 ================================================================================
 
-3.1  Improved map interaction
-     Tasks:
-     - Hover tooltips on tiles showing occupant name, HP, statuses,
-       terrain type
-     - Click-to-select a unit on the map, highlighting valid move tiles
-       in green and attack range in red
-     - Path preview arrows showing planned movement before confirming
-     - Animate movement and attacks (brief flash/pulse on attack,
-       smooth tile-to-tile transition)
-     - Larger map support (up to 20x20) with scroll/zoom
-
-3.2  Character card overhaul
-     Tasks:
-     - Show each combatant as a compact card with: name, HP bar, Anima
-       bar, equipped weapon icon, armor icon, active status effects as
-       colored chips/badges
-     - Status chips for: Prone, Crippled, Poisoned, Blocking, Evading,
-       Bastion, Flowing Stance, Marked, Hidden, Vulnerable, Inspired
-     - Weapon swap indicator (is weapon lifted/loaded?)
-     - Death save indicator (skull icon when critical)
-
-3.3  Input guardrails and validation
-     Tasks:
-     - Gray out / disable invalid action buttons based on current state
-       (e.g., cannot Block without a shield, cannot Volley without a bow)
-     - Show friendly toast notifications for errors instead of silent
-       failures
-     - Confirmation dialog before resetting combat
-     - Warn when equipment does not meet stat requirements
-     - Auto-save last setup to a local JSON; reload on app launch
-
-3.4  Dark / Light theme toggle
-     Status: Theme system exists in ui/theme.py. Need a user-facing toggle.
-     Tasks:
-     - Add View > Toggle Theme menu item
-     - Persist theme choice in settings.json
-     - Ensure all widgets respond correctly to theme switch
-
-3.5  Help and onboarding
-     Tasks:
-     - Add a Help > Quick Start dialog explaining the 3 simulation modes
-     - Add weapon/armor/feat reference tooltips (hover over any feat name
-       to see description + prerequisites)
-     - Add info button next to each feat checkbox
-
-
-================================================================================
-  PHASE 4 - Scenario and Content                       (MEDIUM PRIORITY)
-================================================================================
-
-4.1  Curated preset scenarios
+5.1  Curated preset scenarios
      Tasks:
      - Duel: 1v1 arena, flat terrain, pre-built melee characters
      - Skirmish: 2v2 with forest/cover, mixed melee + ranged
@@ -234,7 +247,7 @@ What is Built (current state)
      - Ambush: surprise round scenario, demonstrates Always Ready /
        Skirmishing Party / First Strike
 
-4.2  Scenario builder improvements
+5.2  Scenario builder improvements
      Tasks:
      - Terrain palette: click a terrain type, then paint it on the map
      - Unit palette: click a preset character, then place on map
@@ -243,7 +256,7 @@ What is Built (current state)
      - Import/export scenarios as shareable JSON files
      - Elevation editing (set tile height for Strategic Archer, etc.)
 
-4.3  Character templates / presets
+5.3  Character templates / presets
      Tasks:
      - Pre-built character archetypes: Swordsman, Archer, Tank, Mage,
        Rogue, Brawler, Paladin
@@ -253,10 +266,10 @@ What is Built (current state)
 
 
 ================================================================================
-  PHASE 5 - Testing and Quality                        (ONGOING)
+  PHASE 6 - Testing and Quality                        (ONGOING)
 ================================================================================
 
-5.1  Expand test coverage
+6.1  Expand test coverage
      Tasks:
      - Add tests for every implemented feat (currently only a subset)
      - Add tests for spellcasting: successful cast, miscast, overcast
@@ -266,7 +279,7 @@ What is Built (current state)
        log output
      - Target: 80%+ code coverage on combat/ module
 
-5.2  Rules validation suite
+6.2  Rules validation suite
      Tasks:
      - Create a test file that encodes specific rule interactions from
        the Avalore docs and asserts the engine handles them correctly
@@ -276,21 +289,18 @@ What is Built (current state)
        that bypass_graze works
      - Example: Large shield negates AP -> test AP immunity on block
 
-5.3  Cleanup deprecated files
-     Status: STRUCTURE.md mentions deprecated root-level ui_*.py files
-     that are superseded by the ui/ module.
+6.3  Cleanup deprecated files
      Tasks:
-     - Verify ui_theme.py, ui_animations.py, ui_components.py,
-       ui_map_widget.py no longer exist or remove them if they do
-     - Remove duplicate csv import in pyside_app.py (line 8/9)
-     - Clean up any dead code or unused imports
+     - Verify deprecated root-level ui_*.py files are removed
+     - Remove duplicate csv import in pyside_app.py
+     - Clean up dead code and unused imports
 
 
 ================================================================================
-  PHASE 6 - Packaging and Distribution                 (LOW PRIORITY)
+  PHASE 7 - Packaging and Distribution                 (LOW PRIORITY)
 ================================================================================
 
-6.1  Cross-platform builds
+7.1  Cross-platform builds
      Tasks:
      - Update avasim.spec (PyInstaller) for Windows one-click build with
        icon and version metadata
@@ -299,7 +309,7 @@ What is Built (current state)
        build artifacts for Windows + macOS on release tag
      - Add a make or just file for common dev tasks (test, build, run)
 
-6.2  Version and updates
+7.2  Version and updates
      Tasks:
      - Read version from packaging/version.txt at runtime; display in
        title bar and Help > About
@@ -308,28 +318,31 @@ What is Built (current state)
 
 
 ================================================================================
-  SUGGESTED EXECUTION ORDER
+  SUGGESTED EXECUTION ORDER FOR PHASE 4  (UI UPGRADE)
 ================================================================================
 
-  Immediate (next 1-2 sessions):
-    1. Weapon/armor stat audit (1.3, 1.4) - quick win, high fidelity impact
-    2. Extract AI to combat/ai.py (2.1) - unblocks testability and future work
-    3. Finish top 5 missing feat implementations (1.1) - pick the feats
-       most used by preset characters
+  The UI upgrade is large.  Tackle it in this order so each step
+  produces a visible, shippable improvement:
 
-  Short-term (next 2-4 sessions):
-    4. Expand spellcasting (1.2) - at least 12 spells across disciplines
-    5. Multi-combatant UI (2.2) - enables richer scenarios
-    6. Input guardrails + autosave (3.3) - low effort, high UX impact
-    7. Character templates (4.3) - makes the app immediately playable
+  Sprint 1 — Foundations (do first, everything else builds on it):
+    1. Layout Architecture (4.1) — sidebar + main canvas split
+    2. Typography and Iconography (4.6) — bundle Inter/JetBrains Mono,
+       upgrade icon set; this lifts the perceived quality of everything
+    3. Theme System Upgrade (4.7) — purge hard-coded colors so all later
+       work inherits correct theming automatically
 
-  Medium-term:
-    8. Batch simulation mode (2.3)
-    9. Map interaction improvements (3.1)
-    10. Curated scenario presets (4.1)
-    11. Expanded test suite (5.1, 5.2)
+  Sprint 2 — The Map (most visible single improvement):
+    4. Map Visual Upgrade (4.3) — terrain patterns, unit tokens, grid
+       labels, coordinate axis, fog dimming
 
-  When ready to ship:
-    12. Packaging and CI (6.1, 6.2)
-    13. Help / onboarding (3.5)
-    14. Theme toggle persistence (3.4)
+  Sprint 3 — Combat Experience:
+    5. Action Log & Combat Feed (4.4) — styled event cards, dice badges
+    6. Replay & Timeline Bar (4.5) — visual pip timeline, speed selector
+
+  Sprint 4 — Character & Polish:
+    7. Character Cards Redesign (4.2) — stat badges, equipment tiles,
+       feat chips, in-combat overlay cards
+    8. Micro-interactions and Animations (4.8) — button hover, tab fade,
+       toast slide, turn banner
+    9. Responsive Layout (4.9) — splitter, fluid resize, test at
+       multiple resolutions

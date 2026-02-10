@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox, QSpinBox, QLineEdit, QWidget
 )
 from PySide6.QtCore import Qt
-from ui_theme import IconProvider
+from ui.theme import IconProvider
 
 
 class LabeledComboBox(QWidget):
@@ -157,3 +157,56 @@ class ControlRow(QWidget):
     def add_spacing(self, space: int = 20):
         """Add fixed spacing."""
         self.layout().addSpacing(space)
+
+
+class CollapsibleSection(QWidget):
+    """A collapsible section with a clickable header that shows/hides content."""
+
+    def __init__(self, title: str, parent=None, collapsed: bool = False):
+        super().__init__(parent)
+        self._title = title
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header button
+        self._toggle_btn = QPushButton(f"▼  {title}")
+        self._toggle_btn.setObjectName("collapsibleHeader")
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setChecked(not collapsed)
+        self._toggle_btn.clicked.connect(self._on_toggle)
+        outer.addWidget(self._toggle_btn)
+
+        # Content container
+        self._content = QWidget()
+        self._content.setObjectName("collapsibleContent")
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setSpacing(6)
+        outer.addWidget(self._content)
+
+        if collapsed:
+            self._content.setVisible(False)
+            self._toggle_btn.setText(f"▶  {title}")
+
+    def _on_toggle(self):
+        expanded = self._toggle_btn.isChecked()
+        self._content.setVisible(expanded)
+        self._toggle_btn.setText(
+            f"▼  {self._title}" if expanded else f"▶  {self._title}"
+        )
+
+    def set_content_layout(self, layout: QVBoxLayout):
+        """Transfer items from *layout* into the content area."""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                self._content_layout.addWidget(item.widget())
+            elif item.layout():
+                self._content_layout.addLayout(item.layout())
+            elif item.spacerItem():
+                self._content_layout.addItem(item.spacerItem())
+
+    def content_layout(self) -> QVBoxLayout:
+        """Direct access to the content layout."""
+        return self._content_layout
