@@ -1,3 +1,4 @@
 PySide6>=6.6
 streamlit>=1.30
 qtawesome>=1.4.0
+matplotlib>=3.8

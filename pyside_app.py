@@ -6,6 +6,7 @@ from typing import Dict
 import json
 import html
 import csv
+import io
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -59,7 +60,206 @@ from ui import (
     ProgressIndicator,
     TextHighlighter,
     TacticalMapWidget,
+    TacticalMapWidget,
 )
+
+
+# ---------------------------------------------------------------------------
+# Batch Results Chart Dialog
+# ---------------------------------------------------------------------------
+
+class BatchChartDialog(QDialog):
+    """Dialog that displays batch simulation results as bar charts."""
+
+    def __init__(self, result: BatchResult, parent=None, title: str = "Batch Results"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(700, 520)
+        layout = QVBoxLayout(self)
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_qimage import FigureCanvasQTAgg  # type: ignore
+        except ImportError:
+            # Fallback: text-only display
+            layout.addWidget(QLabel("Install matplotlib for chart display.\n\n" + result.summary()))
+            btn = QDialogButtonBox(QDialogButtonBox.Ok)
+            btn.accepted.connect(self.accept)
+            layout.addWidget(btn)
+            return
+
+        fig, axes = plt.subplots(1, 3, figsize=(10, 3.5), tight_layout=True)
+
+        # --- Win Rates bar chart ---
+        rates = result.win_rates()
+        teams = sorted(rates.keys())
+        colors = ["#4e79a7", "#e15759", "#76b7b2", "#f28e2b", "#59a14f", "#af7aa1"]
+        ax = axes[0]
+        bars = ax.bar(teams, [rates[t] * 100 for t in teams],
+                      color=colors[:len(teams)], edgecolor="#333", linewidth=0.5)
+        ax.set_ylabel("Win Rate (%)")
+        ax.set_title("Win Rates")
+        ax.set_ylim(0, 100)
+        for bar, t in zip(bars, teams):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                    f"{rates[t]*100:.1f}%", ha="center", va="bottom", fontsize=8)
+
+        # --- Average Damage bar chart ---
+        avg_dmg = result.avg_damage_by_team()
+        ax = axes[1]
+        if avg_dmg:
+            dmg_teams = sorted(avg_dmg.keys())
+            ax.bar(dmg_teams, [avg_dmg[t] for t in dmg_teams],
+                   color=colors[:len(dmg_teams)], edgecolor="#333", linewidth=0.5)
+        ax.set_ylabel("Avg Damage")
+        ax.set_title("Avg Damage / Combat")
+
+        # --- Rounds distribution histogram ---
+        rounds_data = [r.rounds for r in result.records]
+        ax = axes[2]
+        ax.hist(rounds_data, bins=min(20, max(5, len(set(rounds_data)))),
+                color="#4e79a7", edgecolor="#333", linewidth=0.5)
+        ax.set_xlabel("Rounds")
+        ax.set_ylabel("Frequency")
+        ax.set_title(f"Rounds Distribution (avg {result.avg_rounds():.1f})")
+
+        # Render to QPixmap via buffer
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=120)
+        buf.seek(0)
+        plt.close(fig)
+
+        from PySide6.QtGui import QPixmap, QImage
+        img = QImage.fromData(buf.getvalue())
+        pixmap = QPixmap.fromImage(img)
+        chart_label = QLabel()
+        chart_label.setPixmap(pixmap)
+        chart_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(chart_label)
+
+        # Summary text
+        summary_text = QTextEdit()
+        summary_text.setReadOnly(True)
+        summary_text.setPlainText(result.summary())
+        summary_text.setMaximumHeight(130)
+        layout.addWidget(summary_text)
+
+        btn = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn.accepted.connect(self.accept)
+        layout.addWidget(btn)
+
+
+# ---------------------------------------------------------------------------
+# Loadout Comparison Dialog
+# ---------------------------------------------------------------------------
+
+class LoadoutComparisonDialog(QDialog):
+    """Dialog showing side-by-side results for two batch runs (A vs B variant)."""
+
+    def __init__(self, result_a: BatchResult, result_b: BatchResult,
+                 label_a: str, label_b: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Loadout Comparison")
+        self.setMinimumSize(750, 560)
+        layout = QVBoxLayout(self)
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError:
+            layout.addWidget(QLabel("Install matplotlib for chart display."))
+            btn = QDialogButtonBox(QDialogButtonBox.Ok)
+            btn.accepted.connect(self.accept)
+            layout.addWidget(btn)
+            return
+
+        fig, axes = plt.subplots(1, 3, figsize=(10, 3.5), tight_layout=True)
+
+        # Collect win rates for first team across both runs
+        rates_a = result_a.win_rates()
+        rates_b = result_b.win_rates()
+        all_teams = sorted(set(list(rates_a.keys()) + list(rates_b.keys())))
+
+        # --- Grouped Win Rate bar chart ---
+        import numpy as np
+        x = np.arange(len(all_teams))
+        width = 0.35
+        ax = axes[0]
+        vals_a = [rates_a.get(t, 0) * 100 for t in all_teams]
+        vals_b = [rates_b.get(t, 0) * 100 for t in all_teams]
+        ax.bar(x - width/2, vals_a, width, label=label_a, color="#4e79a7", edgecolor="#333", linewidth=0.5)
+        ax.bar(x + width/2, vals_b, width, label=label_b, color="#e15759", edgecolor="#333", linewidth=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(all_teams, fontsize=8)
+        ax.set_ylabel("Win Rate (%)")
+        ax.set_title("Win Rate Comparison")
+        ax.set_ylim(0, 100)
+        ax.legend(fontsize=7)
+
+        # --- Average Damage comparison ---
+        dmg_a = result_a.avg_damage_by_team()
+        dmg_b = result_b.avg_damage_by_team()
+        dmg_teams = sorted(set(list(dmg_a.keys()) + list(dmg_b.keys())))
+        x2 = np.arange(len(dmg_teams))
+        ax = axes[1]
+        ax.bar(x2 - width/2, [dmg_a.get(t, 0) for t in dmg_teams], width,
+               label=label_a, color="#4e79a7", edgecolor="#333", linewidth=0.5)
+        ax.bar(x2 + width/2, [dmg_b.get(t, 0) for t in dmg_teams], width,
+               label=label_b, color="#e15759", edgecolor="#333", linewidth=0.5)
+        ax.set_xticks(x2)
+        ax.set_xticklabels(dmg_teams, fontsize=8)
+        ax.set_ylabel("Avg Damage")
+        ax.set_title("Avg Damage Comparison")
+        ax.legend(fontsize=7)
+
+        # --- Rounds distribution overlay ---
+        ax = axes[2]
+        rounds_a = [r.rounds for r in result_a.records]
+        rounds_b = [r.rounds for r in result_b.records]
+        ax.hist(rounds_a, bins=15, alpha=0.6, label=label_a, color="#4e79a7", edgecolor="#333", linewidth=0.5)
+        ax.hist(rounds_b, bins=15, alpha=0.6, label=label_b, color="#e15759", edgecolor="#333", linewidth=0.5)
+        ax.set_xlabel("Rounds")
+        ax.set_ylabel("Frequency")
+        ax.set_title("Rounds Distribution")
+        ax.legend(fontsize=7)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=120)
+        buf.seek(0)
+        plt.close(fig)
+
+        from PySide6.QtGui import QPixmap, QImage
+        img = QImage.fromData(buf.getvalue())
+        pixmap = QPixmap.fromImage(img)
+        chart_label = QLabel()
+        chart_label.setPixmap(pixmap)
+        chart_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(chart_label)
+
+        # Delta summary
+        summary = QTextEdit()
+        summary.setReadOnly(True)
+        summary.setMaximumHeight(140)
+        lines = [f"=== Comparison: {label_a} vs {label_b} ===", ""]
+        lines.append(f"{'Team':<12} {'WR (A)':>8} {'WR (B)':>8} {'Delta':>8}")
+        lines.append("-" * 40)
+        for t in all_teams:
+            wa = rates_a.get(t, 0) * 100
+            wb = rates_b.get(t, 0) * 100
+            delta = wb - wa
+            sign = "+" if delta >= 0 else ""
+            lines.append(f"{t:<12} {wa:>7.1f}% {wb:>7.1f}% {sign}{delta:>6.1f}%")
+        lines.append("")
+        lines.append(f"Avg rounds: {result_a.avg_rounds():.1f} (A) vs {result_b.avg_rounds():.1f} (B)")
+        summary.setPlainText("\n".join(lines))
+        layout.addWidget(summary)
+
+        btn = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn.accepted.connect(self.accept)
+        layout.addWidget(btn)
 
 
 class CombatantEditor(QGroupBox):
@@ -706,6 +906,14 @@ class MainWindow(QWidget):
         self.batch_button.clicked.connect(self._run_batch_simulation)
         self.batch_button.setToolTip("Run N simulations and show win-rate statistics")
         run_row.addWidget(self.batch_button)
+
+        self.compare_button = QPushButton("Compare Loadouts")
+        self.compare_button.setIcon(IconProvider.get_icon("play"))
+        self.compare_button.clicked.connect(self._compare_loadouts)
+        self.compare_button.setToolTip(
+            "Run batch simulations on current setup, swap a weapon, run again, and compare results"
+        )
+        run_row.addWidget(self.compare_button)
         run_row.addStretch()
         sim_layout.addLayout(run_row)
 
@@ -845,7 +1053,7 @@ class MainWindow(QWidget):
         preset_row = QHBoxLayout()
         preset_row.addWidget(QLabel("Presets:"))
         self.preset_combo = QComboBox()
-        self.preset_combo.addItems(["Custom", "Duel", "Skirmish", "Siege"])
+        self.preset_combo.addItems(["Custom", "Duel", "Skirmish", "Siege", "2v2 Skirmish", "1v3 Ambush", "Free-for-All"])
         self.preset_combo.setMinimumWidth(140)
         preset_row.addWidget(self.preset_combo)
         self.load_preset_button = QPushButton("Load Preset")
@@ -1401,7 +1609,59 @@ class MainWindow(QWidget):
             "defender_pos": [11, 5],
             "terrain": siege_terrain,
         }
-        return {"Duel": duel, "Skirmish": skirmish, "Siege": siege}
+        return {"Duel": duel, "Skirmish": skirmish, "Siege": siege,
+                "2v2 Skirmish": self._build_2v2_preset(),
+                "1v3 Ambush": self._build_1v3_preset(),
+                "Free-for-All": self._build_ffa_preset()}
+
+    def _build_2v2_preset(self) -> dict:
+        terrain = [
+            {"x": 3, "y": 2, "terrain": "forest"},
+            {"x": 3, "y": 3, "terrain": "forest"},
+            {"x": 8, "y": 7, "terrain": "forest"},
+            {"x": 8, "y": 8, "terrain": "forest"},
+            {"x": 5, "y": 5, "terrain": "road"},
+            {"x": 6, "y": 5, "terrain": "road"},
+        ]
+        return {
+            "width": 12, "height": 12,
+            "attacker_pos": [1, 1], "defender_pos": [10, 10],
+            "positions": [[1, 1], [1, 3], [10, 10], [10, 8]],
+            "terrain": terrain,
+            "combatants": 4,
+            "teams": ["Team A", "Team A", "Team B", "Team B"],
+        }
+
+    def _build_1v3_preset(self) -> dict:
+        terrain = [
+            {"x": 6, "y": 4, "terrain": "elevation"},
+            {"x": 6, "y": 5, "terrain": "elevation"},
+            {"x": 6, "y": 6, "terrain": "elevation"},
+        ]
+        return {
+            "width": 12, "height": 10,
+            "attacker_pos": [6, 5], "defender_pos": [2, 2],
+            "positions": [[6, 5], [2, 2], [2, 8], [10, 5]],
+            "terrain": terrain,
+            "combatants": 4,
+            "teams": ["Team A", "Team B", "Team B", "Team B"],
+        }
+
+    def _build_ffa_preset(self) -> dict:
+        terrain = [
+            {"x": 4, "y": 4, "terrain": "forest"},
+            {"x": 5, "y": 4, "terrain": "forest"},
+            {"x": 4, "y": 5, "terrain": "forest"},
+            {"x": 5, "y": 5, "terrain": "forest"},
+        ]
+        return {
+            "width": 10, "height": 10,
+            "attacker_pos": [0, 0], "defender_pos": [9, 9],
+            "positions": [[0, 0], [9, 9], [0, 9]],
+            "terrain": terrain,
+            "combatants": 3,
+            "teams": ["FFA", "FFA", "FFA"],
+        }
 
     def _serialize_scenario(self) -> dict:
         return {
@@ -1519,6 +1779,18 @@ class MainWindow(QWidget):
         preset = self._scenario_presets.get(preset_name)
         if not preset:
             return
+        # Adjust number of combatant editors for multi-combatant presets
+        needed = preset.get("combatants", 2)
+        while len(self.combatant_editors) < needed:
+            self._add_combatant_editor()
+        while len(self.combatant_editors) > needed and len(self.combatant_editors) > 2:
+            self._remove_combatant_editor()
+        # Set team assignments if provided
+        teams = preset.get("teams")
+        if teams:
+            for i, team_name in enumerate(teams):
+                if i < len(self.combatant_editors):
+                    self._set_combo_text(self.combatant_editors[i].team_choice, team_name)
         self._apply_scenario_dict(preset)
         self._refresh_scenario_preview()
 
@@ -2216,12 +2488,130 @@ class MainWindow(QWidget):
             self._set_action_log(action_lines)
             self.map_view.setPlainText(result.summary())
             self._show_toast(f"Batch done: {num} combats in {result.elapsed_seconds:.1f}s", "info")
+
+            # Show chart dialog
+            dlg = BatchChartDialog(result, parent=self)
+            dlg.exec()
         except Exception as exc:
             QMessageBox.critical(self, "Batch failed", f"An error occurred during batch simulation:\n{exc}")
         finally:
             self.simulate_button.setEnabled(True)
             self.batch_button.setEnabled(True)
             self.batch_button.setText("Run Batch Simulation")
+
+    def _compare_loadouts(self) -> None:
+        """Run two batch simulations side-by-side: current setup (A) vs a variant (B).
+
+        The user picks which combatant to modify and selects an alternate
+        weapon.  Both batches run with the same number of combats and the
+        results are shown in a comparison dialog with grouped bar charts.
+        """
+        from PySide6.QtWidgets import QInputDialog
+
+        # Ask for number of combats
+        num, ok = QInputDialog.getInt(
+            self, "Compare Loadouts", "Number of combats per loadout:", 100, 10, 10000, 50)
+        if not ok:
+            return
+
+        # Ask which combatant to modify
+        names = [ed.name_input.text() or f"Character {i+1}" for i, ed in enumerate(self.combatant_editors)]
+        char_name, ok = QInputDialog.getItem(
+            self, "Compare Loadouts", "Modify which combatant?", names, 0, False)
+        if not ok:
+            return
+        char_idx = names.index(char_name)
+
+        # Ask for the alternate weapon
+        weapon_names = sorted(AVALORE_WEAPONS.keys())
+        current_weapon = self.combatant_editors[char_idx].hand1_combo.currentText()
+        alt_weapon, ok = QInputDialog.getItem(
+            self, "Compare Loadouts",
+            f"Alternate weapon for {char_name}\n(current: {current_weapon}):",
+            weapon_names, weapon_names.index(current_weapon) if current_weapon in weapon_names else 0, False)
+        if not ok or alt_weapon == current_weapon:
+            self._show_toast("Same weapon selected — nothing to compare.", "warning")
+            return
+
+        try:
+            templates = [ed.to_template() for ed in self.combatant_editors]
+            team_assignments = [ed.team_choice.currentText() for ed in self.combatant_editors]
+
+            def _make_factory(tmpl_list):
+                def factory():
+                    parts = []
+                    for i, tmpl in enumerate(tmpl_list):
+                        ed = CombatantEditor(f"Character {i + 1}")
+                        ed.load_template(tmpl)
+                        p = ed.to_participant()
+                        team_text = team_assignments[i]
+                        p.team = "" if team_text == "FFA" else team_text
+                        parts.append(p)
+                        ed.deleteLater()
+                    return parts
+                return factory
+
+            def make_map(participants):
+                return self._build_tactical_map(participants)
+
+            surprise_text = self.surprise_combo.currentText()
+            surprise_val = "none"
+            if surprise_text == "Party Surprised":
+                surprise_val = "surprised"
+            elif surprise_text == "Party Ambushes":
+                surprise_val = "ambush"
+
+            # --- Run A (current setup) ---
+            config_a = BatchConfig(
+                participants_factory=_make_factory(templates),
+                map_factory=make_map,
+                num_combats=num,
+                turn_limit=200,
+                strategy="balanced",
+                time_of_day=self._time_of_day,
+                surprise=surprise_val,
+            )
+            self.simulate_button.setEnabled(False)
+            self.batch_button.setEnabled(False)
+            self.compare_button.setEnabled(False)
+            self.compare_button.setText("Running A...")
+            QApplication.processEvents()
+            result_a = BatchRunner.run(config_a)
+
+            # --- Build variant B templates ---
+            templates_b = [copy.deepcopy(t) for t in templates]
+            templates_b[char_idx]["hand1"] = alt_weapon
+
+            config_b = BatchConfig(
+                participants_factory=_make_factory(templates_b),
+                map_factory=make_map,
+                num_combats=num,
+                turn_limit=200,
+                strategy="balanced",
+                time_of_day=self._time_of_day,
+                surprise=surprise_val,
+            )
+            self.compare_button.setText("Running B...")
+            QApplication.processEvents()
+            result_b = BatchRunner.run(config_b)
+
+            label_a = f"{char_name} w/ {current_weapon}"
+            label_b = f"{char_name} w/ {alt_weapon}"
+
+            dlg = LoadoutComparisonDialog(result_a, result_b, label_a, label_b, parent=self)
+            dlg.exec()
+
+            self._show_toast(
+                f"Comparison: {num} combats × 2 loadouts in "
+                f"{result_a.elapsed_seconds + result_b.elapsed_seconds:.1f}s", "info")
+        except Exception as exc:
+            QMessageBox.critical(self, "Compare failed",
+                                 f"An error occurred during comparison:\n{exc}")
+        finally:
+            self.simulate_button.setEnabled(True)
+            self.batch_button.setEnabled(True)
+            self.compare_button.setEnabled(True)
+            self.compare_button.setText("Compare Loadouts")
 
     def move_attacker(self):
         try:

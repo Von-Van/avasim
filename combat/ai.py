@@ -16,6 +16,7 @@ Strategies:
 
 from __future__ import annotations
 
+import random as _random
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
@@ -48,6 +49,12 @@ STRATEGY_DEFAULTS = {
     "balanced": {
         "defend_hp_threshold": 0.50,
         "defend_prob_threshold": 0.55,
+        "ev_attack_floor": 0.0,
+        "prefer_attack_over_stance": False,
+    },
+    "random": {
+        "defend_hp_threshold": 0.50,
+        "defend_prob_threshold": 0.50,
         "ev_attack_floor": 0.0,
         "prefer_attack_over_stance": False,
     },
@@ -94,6 +101,10 @@ class CombatAI:
         The method directly calls engine action methods.  It is designed
         to be a drop-in replacement for the old ``_take_auto_actions``.
         """
+        if self.strategy == "random":
+            self._decide_turn_random(engine, current)
+            return
+
         target = self._pick_target(engine, current)
         if target is None:
             return
@@ -144,6 +155,43 @@ class CombatAI:
             engine.perform_attack(current, target, weapon=weapon)
             swings += 1
             expected_value = self.expected_attack_value(current, target, weapon)
+
+    # ------------------------------------------------------------------
+    # Random strategy
+    # ------------------------------------------------------------------
+
+    def _decide_turn_random(self, engine: AvaCombatEngine,
+                             current: CombatParticipant) -> None:
+        """Random strategy: pick random targets and random actions each turn."""
+        target = self._pick_target(engine, current)
+        if target is None:
+            return
+        weapon = current.weapon_main or AVALORE_WEAPONS["Unarmed"]
+        self._log(engine, "Decision (random): choosing actions randomly.")
+
+        # Random movement phase
+        if engine.tactical_map and not current.free_move_used:
+            allowance = self._movement_allowance(current, use_dash=False)
+            if allowance > 0:
+                reachable = self._reachable_tiles(
+                    engine.tactical_map, current.position, allowance)
+                tiles = [t for t in reachable if t != target.position]
+                if tiles:
+                    dest = _random.choice(tiles)
+                    engine.action_move(current, *dest)
+
+        # Random stance (50% chance)
+        if _random.random() < 0.5:
+            if current.shield and _random.random() < 0.5:
+                engine.action_block(current)
+            else:
+                engine.action_evade(current)
+
+        # Attack with remaining actions
+        attack_cost = weapon.actions_required
+        while (current.actions_remaining >= attack_cost
+               and target.current_hp > 0):
+            engine.perform_attack(current, target, weapon=weapon)
 
     # ------------------------------------------------------------------
     # Target selection

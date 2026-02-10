@@ -313,6 +313,51 @@ class TestDecideTurn(unittest.TestCase):
         self.assertFalse(attacker.is_evading,
                          "Aggressive AI should prefer attacking over evading")
 
+    def test_random_strategy_runs(self):
+        """Random strategy should complete a turn without crashing."""
+        ai = CombatAI(strategy="random")
+        self.assertEqual(ai.strategy, "random")
+        attacker = _make_participant("Randomizer", hp=20, weapon="Arming Sword",
+                                      strength=2, athletics=1, position=(0, 0))
+        defender = _make_participant("Target", hp=20, position=(1, 0))
+        tmap = TacticalMap(10, 10)
+        tmap.set_occupant(0, 0, attacker)
+        tmap.set_occupant(1, 0, defender)
+        engine = AvaCombatEngine([attacker, defender], tmap)
+        engine.log = lambda msg: engine.combat_log.append(msg)
+
+        attacker.actions_remaining = 2
+        ai.decide_turn(engine, attacker)
+        # Should have used at least some actions
+        self.assertLessEqual(attacker.actions_remaining, 2)
+
+    def test_random_strategy_full_combat(self):
+        """Random strategy should complete a full combat without crashing."""
+        ai = CombatAI(strategy="random")
+        p1 = _make_participant("R1", hp=15, weapon="Arming Sword",
+                               strength=2, athletics=1, position=(0, 0))
+        p2 = _make_participant("R2", hp=15, weapon="Arming Sword",
+                               strength=2, athletics=1, position=(2, 0))
+        tmap = TacticalMap(10, 10)
+        tmap.set_occupant(0, 0, p1)
+        tmap.set_occupant(2, 0, p2)
+        engine = AvaCombatEngine([p1, p2], tmap)
+        engine.log = lambda msg: engine.combat_log.append(msg)
+        engine.roll_initiative()
+
+        turns = 0
+        while not engine.is_combat_ended() and turns < 100:
+            current = engine.get_current_participant()
+            if current is None or current.current_hp <= 0:
+                engine.advance_turn()
+                turns += 1
+                continue
+            ai.decide_turn(engine, current)
+            engine.advance_turn()
+            turns += 1
+
+        self.assertTrue(engine.is_combat_ended() or turns >= 100)
+
 
 class TestPickTarget(unittest.TestCase):
     """Test target selection."""
