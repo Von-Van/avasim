@@ -45,6 +45,8 @@ from combat import (
     AVALORE_ARMOR,
     AVALORE_SHIELDS,
     AVALORE_WEAPONS,
+    AVALORE_FEATS,
+    Feat,
     AvaCombatEngine,
     CombatParticipant,
     TacticalMap,
@@ -330,7 +332,16 @@ class CombatantEditor(QGroupBox):
         equip_layout.addWidget(self.hand2_choice, 2, 1)
         equip_box.setLayout(equip_layout)
 
+        self._equip_warning_label = QLabel("")
+        self._equip_warning_label.setStyleSheet("color: #d32f2f; font-size: 9pt;")
+        self._equip_warning_label.setWordWrap(True)
+        self._equip_warning_label.hide()
+
         self._refresh_hand_options()
+        # Connect equipment changes to requirement checks
+        self.hand1_choice.currentTextChanged.connect(lambda _: self._check_equipment_requirements())
+        self.hand2_choice.currentTextChanged.connect(lambda _: self._check_equipment_requirements())
+        self.armor_choice.currentTextChanged.connect(lambda _: self._check_equipment_requirements())
 
         # HP/Anima
         core_box = QGroupBox("Vitals")
@@ -360,7 +371,46 @@ class CombatantEditor(QGroupBox):
         self.layout().addWidget(stats_box)
         self.layout().addWidget(skills_box)
         self.layout().addWidget(equip_box)
+        self.layout().addWidget(self._equip_warning_label)
+
+        # Feat picker
+        feat_box = QGroupBox("Feats (click ℹ for details)")
+        feat_box.setCheckable(True)
+        feat_box.setChecked(False)  # collapsed by default
+        feat_layout = QGridLayout()
+        feat_layout.setSpacing(2)
+        self.feat_checks: Dict[str, QCheckBox] = {}
+        row = 0
+        for feat_name, feat_obj in sorted(AVALORE_FEATS.items()):
+            cb = QCheckBox(feat_name)
+            # Build a rich tooltip with description + requirements
+            req_parts = []
+            for req_key, req_val in feat_obj.stat_requirements.items():
+                req_parts.append(f"{req_key} ≥ {req_val}")
+            req_str = ", ".join(req_parts) if req_parts else "None"
+            cb.setToolTip(f"{feat_obj.description}\n\nRequirements: {req_str}")
+            feat_layout.addWidget(cb, row, 0)
+            self.feat_checks[feat_name] = cb
+            row += 1
+        feat_scroll = QScrollArea()
+        feat_scroll.setWidgetResizable(True)
+        feat_inner = QWidget()
+        feat_inner.setLayout(feat_layout)
+        feat_scroll.setWidget(feat_inner)
+        feat_scroll.setMaximumHeight(180)
+        feat_box_layout = QVBoxLayout()
+        feat_box_layout.addWidget(feat_scroll)
+        feat_box.setLayout(feat_box_layout)
+
+        self.layout().addWidget(feat_box)
         self.layout().addWidget(core_box)
+
+        # Connect stat changes to equipment requirement checks
+        for spin in self.stat_spins.values():
+            spin.valueChanged.connect(lambda _: self._check_equipment_requirements())
+        for skills in self.skill_spins.values():
+            for spin in skills.values():
+                spin.valueChanged.connect(lambda _: self._check_equipment_requirements())
 
     def _spin_box(self, min_val: int, max_val: int, value: int) -> QSpinBox:
         spin = QSpinBox()
@@ -416,6 +466,11 @@ class CombatantEditor(QGroupBox):
         assign_hand(hand1_sel)
         assign_hand(hand2_sel)
 
+        # Collect selected feats
+        selected_feats = [
+            AVALORE_FEATS[name] for name, cb in self.feat_checks.items() if cb.isChecked()
+        ]
+
         participant = CombatParticipant(
             character=char,
             current_hp=current_hp,
@@ -426,6 +481,7 @@ class CombatantEditor(QGroupBox):
             weapon_offhand=weapon_offhand,
             armor=armor,
             shield=shield,
+            feats=selected_feats,
         )
         team_val = self.team_choice.currentText()
         participant.team = "" if team_val == "FFA" else team_val
@@ -443,6 +499,7 @@ class CombatantEditor(QGroupBox):
             "hand2": self.hand2_choice.currentText(),
             "armor": self.armor_choice.currentText(),
             "team": self.team_choice.currentText(),
+            "feats": [name for name, cb in self.feat_checks.items() if cb.isChecked()],
         }
 
     def load_template(self, data: dict) -> None:
@@ -470,6 +527,10 @@ class CombatantEditor(QGroupBox):
             self.armor_choice.setCurrentText(data.get("armor"))
         if data.get("team"):
             self.team_choice.setCurrentText(str(data["team"]))
+        # Restore feat selections
+        feat_list = data.get("feats", [])
+        for name, cb in self.feat_checks.items():
+            cb.setChecked(name in feat_list)
         self._refresh_hand_options()
 
     def _blank_template(self) -> dict:
@@ -525,6 +586,47 @@ class CombatantEditor(QGroupBox):
 
         self._apply_hand_disable(self.hand1_choice, disable_hand1)
         self._apply_hand_disable(self.hand2_choice, disable_hand2)
+
+    def _check_equipment_requirements(self) -> None:
+        """Check if current equipment meets stat requirements and show warnings."""
+        warnings: list[str] = []
+
+        # Gather current stat/skill values
+        stat_vals: dict[str, int] = {}
+        for stat, spin in self.stat_spins.items():
+            stat_vals[stat] = int(spin.value())
+        for stat, skills in self.skill_spins.items():
+            for skill, spin in skills.items():
+                stat_vals[f"{stat}:{skill}"] = int(spin.value())
+
+        # Check each equipped item
+        items_to_check: list[tuple[str, dict]] = []
+        hand1_name = self.hand1_choice.currentText()
+        hand2_name = self.hand2_choice.currentText()
+        armor_name = self.armor_choice.currentText()
+
+        if hand1_name in AVALORE_WEAPONS:
+            items_to_check.append((hand1_name, AVALORE_WEAPONS[hand1_name].stat_requirements))
+        elif hand1_name in AVALORE_SHIELDS:
+            items_to_check.append((hand1_name, AVALORE_SHIELDS[hand1_name].stat_requirements))
+        if hand2_name in AVALORE_WEAPONS:
+            items_to_check.append((hand2_name, AVALORE_WEAPONS[hand2_name].stat_requirements))
+        elif hand2_name in AVALORE_SHIELDS:
+            items_to_check.append((hand2_name, AVALORE_SHIELDS[hand2_name].stat_requirements))
+        if armor_name != "None" and armor_name in AVALORE_ARMOR:
+            items_to_check.append((armor_name, AVALORE_ARMOR[armor_name].stat_requirements))
+
+        for item_name, reqs in items_to_check:
+            for req_key, min_val in reqs.items():
+                current_val = stat_vals.get(req_key, 0)
+                if current_val < min_val:
+                    warnings.append(f"⚠ {item_name} requires {req_key} ≥ {min_val} (current: {current_val})")
+
+        if warnings:
+            self._equip_warning_label.setText("\n".join(warnings))
+            self._equip_warning_label.show()
+        else:
+            self._equip_warning_label.hide()
 
 
 class ScenarioEditorDialog(QDialog):
@@ -1214,6 +1316,8 @@ class MainWindow(QWidget):
         bars_layout.addWidget(self.defender_hp_bar, 2, 0)
         bars_layout.addWidget(self.defender_armor_bar, 3, 0)
         bars_group.setLayout(bars_layout)
+        self._combat_bars_layout = bars_layout
+        self._extra_combat_bars = []
         left_col.addWidget(bars_group)
 
         self.map_view = QTextEdit()
@@ -1849,13 +1953,23 @@ class MainWindow(QWidget):
         attacker = self.attacker_editor.to_participant()
         weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
         attack_ok = self._is_distance_in_range(weapon, dist)
+        has_shield = attacker.shield is not None
         for combo in (self.player_action1_combo, self.player_action2_combo):
-            idx = combo.findText("Attack")
-            if idx >= 0:
-                item = combo.model().item(idx)
+            # Disable Attack when out of range
+            idx_attack = combo.findText("Attack")
+            if idx_attack >= 0:
+                item = combo.model().item(idx_attack)
                 if item:
                     item.setEnabled(attack_ok)
                 if not attack_ok and combo.currentText() == "Attack":
+                    combo.setCurrentText("Skip")
+            # Disable Block when no shield equipped
+            idx_block = combo.findText("Block")
+            if idx_block >= 0:
+                item = combo.model().item(idx_block)
+                if item:
+                    item.setEnabled(has_shield)
+                if not has_shield and combo.currentText() == "Block":
                     combo.setCurrentText("Skip")
 
     def _build_overlay_data(self) -> tuple[dict, list]:
@@ -2251,18 +2365,64 @@ class MainWindow(QWidget):
         """Render visual tactical map using enhanced widget."""
         if hasattr(self, 'tactical_map_widget'):
             if snapshot:
+                # Build occupant detail dict for rich tooltips
+                occupant_details: dict[tuple[int, int], dict] = {}
+                engine = getattr(self, "_last_engine", None)
+                if engine:
+                    for p in engine.participants:
+                        if p.position:
+                            statuses = []
+                            if p.is_blocking:
+                                statuses.append("Blocking")
+                            if p.is_evading:
+                                statuses.append("Evading")
+                            if p.bastion_active:
+                                statuses.append("Bastion")
+                            if p.flowing_stance:
+                                statuses.append("Flowing Stance")
+                            if p.is_critical:
+                                statuses.append("Critical")
+                            if p.inspired_scene:
+                                statuses.append("Inspired")
+                            for se in getattr(p, "status_effects", set()):
+                                statuses.append(se.name.title())
+                            occupant_details[tuple(p.position)] = {
+                                "hp": p.current_hp,
+                                "max_hp": p.max_hp,
+                                "weapon": p.weapon_main.name if p.weapon_main else "Unarmed",
+                                "armor": p.armor.name if p.armor else "None",
+                                "statuses": statuses,
+                            }
+                self.tactical_map_widget.set_occupant_details(occupant_details)
                 decorated = self._decorate_snapshot(snapshot, engine=self._last_engine)
                 self.tactical_map_widget.draw_snapshot(decorated)
             else:
+                self.tactical_map_widget.set_occupant_details({})
                 self.tactical_map_widget.draw_snapshot(None)
 
     def _show_howto(self) -> None:
         QMessageBox.information(
             self,
             "How to run a simulation",
-            "1) Fill in Character 1 and 2 (or use Quick Start)\n"
-            "2) Pick theme/time, choose mode (AI or player)\n"
-            "3) Click Run full combat; review action/map logs and grid",
+            "AvaSim supports three simulation modes:\n\n"
+            "🤖 AI vs AI (Full Combat)\n"
+            "  Both characters are controlled by the AI engine.\n"
+            "  Select a strategy (aggressive, defensive, balanced, random)\n"
+            "  and click 'Run full combat' to watch the entire fight play out.\n\n"
+            "🎮 Player controls Character 1\n"
+            "  You choose actions for Character 1 each turn using the\n"
+            "  Action 1 / Action 2 dropdowns. The AI controls opponents.\n"
+            "  After selecting actions, click 'Execute Turn'.\n\n"
+            "🎮 Player controls both\n"
+            "  You control both characters' actions each turn.\n\n"
+            "📊 Batch Simulation\n"
+            "  Run 100-10,000 combats with the same setup to get\n"
+            "  win rates and average stats. Click 'Batch Sim' to start.\n\n"
+            "🔀 Compare Loadouts\n"
+            "  Swap Character 1's weapon and run two batch simulations\n"
+            "  side-by-side to see how loadout changes affect win rates.\n\n"
+            "Quick start: Use the Preset dropdown to load a pre-built\n"
+            "scenario, then click 'Run full combat'.",
         )
 
     def _show_shortcuts(self) -> None:
@@ -2686,6 +2846,14 @@ class MainWindow(QWidget):
         if hasattr(self, "decision_view"):
             self.decision_view.setFont(mono_font)
 
+        # Update tactical map colors to match theme
+        if hasattr(self, "tactical_map_widget"):
+            is_dark = self.theme_manager.current_theme == Theme.DARK
+            if is_dark:
+                self.tactical_map_widget.set_theme_colors("#2d2d2d", "#555555")
+            else:
+                self.tactical_map_widget.set_theme_colors("#f0ede6", "#999999")
+
     def _render_initiative(self, engine: AvaCombatEngine) -> None:
         if not engine.turn_order:
             self.initiative_label.setText("(no initiative)")
@@ -2790,19 +2958,44 @@ class MainWindow(QWidget):
                 elif p.armor.category.name == "HEAVY":
                     armor_rating = 3
             armor_pct = int((armor_rating / 3) * 100) if armor_rating else 0
+
+            # -- Weapon and shield labels --
+            weapon_label = p.weapon_main.name if p.weapon_main else "Unarmed"
+            offhand_label = ""
+            if p.weapon_offhand:
+                offhand_label = f" / {p.weapon_offhand.name}"
+            elif p.shield:
+                offhand_label = f" / {p.shield.name}"
+
+            # -- Anima bar --
+            anima_pct = int((p.anima / max(1, p.max_anima)) * 100) if p.max_anima else 0
+            anima_label = f"Anima {p.anima}/{p.max_anima}" if p.max_anima else ""
+
+            # -- Status chips --
             statuses = []
             if p.is_blocking:
-                statuses.append(("BLK Blocking", "#264653"))
+                statuses.append(("🛡 Blocking", "#264653"))
             if p.is_evading:
-                statuses.append(("EVD Evading", "#2a9d8f"))
+                statuses.append(("⚡ Evading", "#2a9d8f"))
+            if p.bastion_active:
+                statuses.append(("🏰 Bastion", "#1d3557"))
+            if p.flowing_stance:
+                statuses.append(("🌊 Flowing", "#457b9d"))
+            if p.inspired_scene:
+                statuses.append(("✨ Inspired", "#e9c46a"))
+            if p.is_critical:
+                statuses.append(("💀 Critical", "#9d0208"))
+            if getattr(p, "death_save_failures", 0) > 0:
+                skulls = "💀" * p.death_save_failures
+                statuses.append((f"{skulls} Death Saves: {p.death_save_failures}", "#6a040f"))
             for status in getattr(p, "status_effects", set()):
                 label = status.name.title()
                 icon = status_icons.get(label, "STS")
                 statuses.append((f"{icon} {label}", "#e76f51"))
             if not statuses:
-                statuses.append(("OK Stable", "#6c757d"))
+                statuses.append(("✓ Stable", "#6c757d"))
 
-            status_html = " ".join([f"<span style='background:{color};color:white;padding:2px 6px;border-radius:8px;'>{label}</span>" for label, color in statuses])
+            status_html = " ".join([f"<span style='background:{color};color:white;padding:2px 6px;border-radius:8px;font-size:9pt;'>{label}</span>" for label, color in statuses])
             hp_bar = (
                 f"<div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;margin-top:4px;'>"
                 f"<div style='width:{hp_pct}%;height:6px;background:#e63946;'></div></div>"
@@ -2811,11 +3004,23 @@ class MainWindow(QWidget):
                 f"<div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;margin-top:3px;'>"
                 f"<div style='width:{armor_pct}%;height:6px;background:#457b9d;'></div></div>"
             )
+            anima_bar_html = ""
+            if p.max_anima:
+                anima_bar_html = (
+                    f"<div style='color:#666;font-size:9pt;margin-top:2px;'>{anima_label}</div>"
+                    f"<div style='height:6px;background:#eee;border-radius:4px;overflow:hidden;margin-top:2px;'>"
+                    f"<div style='width:{anima_pct}%;height:6px;background:#7b2cbf;'></div></div>"
+                )
+            equip_html = (
+                f"<div style='color:#555;font-size:9pt;margin-top:2px;'>⚔ {html.escape(weapon_label)}{html.escape(offhand_label)}"
+                f" &nbsp;|&nbsp; 🛡 {html.escape(armor_label)}</div>"
+            )
             chips.append(
-                f"<div style='margin-bottom:8px;'><b>{name}</b> <span style='color:#888;'>[{arch}]</span> — "
-                f"<span style='color:#555;'>{hp}</span> {status_html}"
-                f"<div style='color:#666;font-size:9pt;margin-top:2px;'>Armor: {armor_label}</div>"
-                f"{hp_bar}{armor_bar}</div>"
+                f"<div style='margin-bottom:10px;'><b>{name}</b> <span style='color:#888;'>[{arch}]</span> — "
+                f"<span style='color:#555;'>{hp}</span><br/>"
+                f"{status_html}"
+                f"{equip_html}"
+                f"{hp_bar}{armor_bar}{anima_bar_html}</div>"
             )
         return "".join(chips)
 
@@ -2846,6 +3051,35 @@ class MainWindow(QWidget):
             self.defender_hp_bar.setValue(max(0, participants[1].current_hp))
             self.defender_hp_bar.setFormat(f"{participants[1].character.name} HP: %v/%m")
             self.defender_armor_bar.setValue(armor_score(participants[1]))
+
+        # Update extra combatant bars (3+)
+        extra_bars = getattr(self, "_extra_combat_bars", [])
+        for bar_pair in extra_bars:
+            bar_pair["hp"].setVisible(False)
+            bar_pair["armor"].setVisible(False)
+        for i in range(2, len(participants)):
+            p = participants[i]
+            if i - 2 < len(extra_bars):
+                hp_bar = extra_bars[i - 2]["hp"]
+                armor_bar = extra_bars[i - 2]["armor"]
+            else:
+                hp_bar = QProgressBar()
+                hp_bar.setTextVisible(True)
+                armor_bar = QProgressBar()
+                armor_bar.setMaximum(3)
+                armor_bar.setTextVisible(True)
+                armor_bar.setFormat("Armor: %v/3")
+                if hasattr(self, "_combat_bars_layout"):
+                    self._combat_bars_layout.addWidget(hp_bar)
+                    self._combat_bars_layout.addWidget(armor_bar)
+                extra_bars.append({"hp": hp_bar, "armor": armor_bar})
+            hp_bar.setMaximum(max(1, p.max_hp))
+            hp_bar.setValue(max(0, p.current_hp))
+            hp_bar.setFormat(f"{p.character.name} HP: %v/%m")
+            hp_bar.setVisible(True)
+            armor_bar.setValue(armor_score(p))
+            armor_bar.setVisible(True)
+        self._extra_combat_bars = extra_bars
 
     def _execute_player_turn(self, engine: AvaCombatEngine, current: CombatParticipant, target: CombatParticipant) -> None:
         actions = self._selected_player_actions()

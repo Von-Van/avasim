@@ -5,7 +5,7 @@ Provides better graphics rendering and terrain visualization.
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PySide6.QtGui import QPen, QBrush, QColor
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 
 class TacticalMapWidget(QGraphicsView):
@@ -32,6 +32,9 @@ class TacticalMapWidget(QGraphicsView):
     LOS_OVERLAY = QColor(30, 80, 160, 70)    # Blue overlay
     BLOCKED_OVERLAY = QColor(110, 110, 110, 80)  # Gray overlay
     PATH_OVERLAY = QColor(244, 162, 97, 120)     # Orange overlay
+    MOVE_HIGHLIGHT = QColor(76, 175, 80, 80)     # Green move highlight
+    ATTACK_HIGHLIGHT = QColor(229, 57, 53, 60)   # Red attack highlight
+    SELECTED_BORDER = QColor("#FFD700")           # Gold selection border
     
     def __init__(self, width=10, height=10, parent=None):
         super().__init__(parent)
@@ -44,6 +47,12 @@ class TacticalMapWidget(QGraphicsView):
         self._on_click = None
         self._on_hover = None
         self._last_hover = None
+        self._zoom_level = 1.0
+        self._selected_cell = None
+        self._move_highlights = []
+        self._attack_highlights = []
+        self._flash_items = []
+        self._occupant_details = {}  # (x,y) -> dict with hp, statuses, weapon, etc.
         
         # Set scene rect
         self.scene.setSceneRect(0, 0, width * self.CELL_WIDTH, height * self.CELL_HEIGHT)
@@ -52,6 +61,7 @@ class TacticalMapWidget(QGraphicsView):
         self.setRenderHint(self.RenderHint.Antialiasing)
         self.setRenderHint(self.RenderHint.SmoothPixmapTransform)
         self.setMouseTracking(True)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         
         # Initialize grid
         self._draw_empty_grid()
@@ -141,7 +151,18 @@ class TacticalMapWidget(QGraphicsView):
                 font.setBold(True)
                 text_item.setFont(font)
                 tooltip_parts.append(f"Occupant: {occupant}")
-            rect_item.setToolTip(" | ".join(tooltip_parts))
+                # Include detailed occupant info if available
+                detail = self._occupant_details.get((x, y))
+                if detail:
+                    if "hp" in detail and "max_hp" in detail:
+                        tooltip_parts.append(f"HP: {detail['hp']}/{detail['max_hp']}")
+                    if detail.get("weapon"):
+                        tooltip_parts.append(f"Weapon: {detail['weapon']}")
+                    if detail.get("armor"):
+                        tooltip_parts.append(f"Armor: {detail['armor']}")
+                    if detail.get("statuses"):
+                        tooltip_parts.append(f"Status: {', '.join(detail['statuses'])}")
+            rect_item.setToolTip("\n".join(tooltip_parts))
             
             self.cells[(x, y)] = {
                 "rect": rect_item,
@@ -263,6 +284,115 @@ class TacticalMapWidget(QGraphicsView):
         if 0 <= x < self.width and 0 <= y < self.height:
             return (x, y)
         return None
+
+    # ------------------------------------------------------------------
+    # Zoom (scroll wheel)
+    # ------------------------------------------------------------------
+
+    def wheelEvent(self, event):
+        """Zoom in/out with scroll wheel."""
+        delta = event.angleDelta().y()
+        if delta > 0 and self._zoom_level < 3.0:
+            factor = 1.15
+            self._zoom_level *= factor
+            self.scale(factor, factor)
+        elif delta < 0 and self._zoom_level > 0.3:
+            factor = 1 / 1.15
+            self._zoom_level *= factor
+            self.scale(factor, factor)
+        event.accept()
+
+    def reset_zoom(self):
+        """Reset zoom to fit the scene."""
+        self._zoom_level = 1.0
+        self.resetTransform()
+        self.fitInView(self.scene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+    # ------------------------------------------------------------------
+    # Occupant detail data (for rich tooltips)
+    # ------------------------------------------------------------------
+
+    def set_occupant_details(self, details: dict):
+        """Set occupant detail data for rich tooltips.
+        
+        details: dict mapping (x, y) -> {
+            "hp": int, "max_hp": int, "weapon": str, "armor": str,
+            "statuses": list[str]
+        }
+        """
+        self._occupant_details = details or {}
+
+    # ------------------------------------------------------------------
+    # Click-to-select and highlights
+    # ------------------------------------------------------------------
+
+    def set_selection_highlights(self, move_cells=None, attack_cells=None):
+        """Overlay green move tiles and red attack tiles for a selected unit."""
+        # Clear previous highlights
+        for item in self._move_highlights + self._attack_highlights:
+            self.scene.removeItem(item)
+        self._move_highlights.clear()
+        self._attack_highlights.clear()
+
+        for x, y in (move_cells or []):
+            if (x, y) not in self.cells:
+                continue
+            rect = self.scene.addRect(
+                x * self.CELL_WIDTH, y * self.CELL_HEIGHT,
+                self.CELL_WIDTH - 1, self.CELL_HEIGHT - 1,
+                QPen(Qt.NoPen), QBrush(self.MOVE_HIGHLIGHT),
+            )
+            rect.setZValue(5)
+            self._move_highlights.append(rect)
+
+        for x, y in (attack_cells or []):
+            if (x, y) not in self.cells:
+                continue
+            rect = self.scene.addRect(
+                x * self.CELL_WIDTH, y * self.CELL_HEIGHT,
+                self.CELL_WIDTH - 1, self.CELL_HEIGHT - 1,
+                QPen(Qt.NoPen), QBrush(self.ATTACK_HIGHLIGHT),
+            )
+            rect.setZValue(5)
+            self._attack_highlights.append(rect)
+
+    def clear_selection_highlights(self):
+        """Remove all selection highlights."""
+        self.set_selection_highlights([], [])
+        self._selected_cell = None
+
+    # ------------------------------------------------------------------
+    # Attack flash animation
+    # ------------------------------------------------------------------
+
+    def flash_cell(self, x: int, y: int, color: QColor = None, duration_ms: int = 300):
+        """Flash a cell briefly to indicate an attack or event."""
+        if (x, y) not in self.cells:
+            return
+        if color is None:
+            color = QColor(255, 50, 50, 160)
+        rect = self.scene.addRect(
+            x * self.CELL_WIDTH, y * self.CELL_HEIGHT,
+            self.CELL_WIDTH - 1, self.CELL_HEIGHT - 1,
+            QPen(Qt.NoPen), QBrush(color),
+        )
+        rect.setZValue(10)
+        self._flash_items.append(rect)
+        QTimer.singleShot(duration_ms, lambda r=rect: self._remove_flash(r))
+
+    def _remove_flash(self, rect):
+        if rect in self._flash_items:
+            self._flash_items.remove(rect)
+            self.scene.removeItem(rect)
+
+    # ------------------------------------------------------------------
+    # Theme-aware color updates
+    # ------------------------------------------------------------------
+
+    def set_theme_colors(self, normal_color: str, grid_color: str):
+        """Update terrain and grid colors to match the current theme."""
+        self.TERRAIN_COLORS["normal"] = QColor(normal_color)
+        self._grid_color = QColor(grid_color)
 
 class MapLegend(QWidget):
     """A legend for the tactical map."""
