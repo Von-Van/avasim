@@ -189,9 +189,18 @@ class CombatAI:
 
         # Attack with remaining actions
         attack_cost = weapon.actions_required
+        max_swings = 4  # safety cap
+        swings = 0
         while (current.actions_remaining >= attack_cost
-               and target.current_hp > 0):
+               and target.current_hp > 0
+               and swings < max_swings):
+            before = current.actions_remaining
             engine.perform_attack(current, target, weapon=weapon)
+            swings += 1
+            # If no actions were consumed (e.g. out of range), stop to
+            # avoid an infinite loop.
+            if current.actions_remaining >= before:
+                break
 
     # ------------------------------------------------------------------
     # Target selection
