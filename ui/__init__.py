@@ -15,6 +15,7 @@ from .theme import (
     FontConfig,
     IconProvider,
     ThemeManager,
+    load_fantasy_fonts,
 )
 
 # Components and animations
@@ -51,6 +52,7 @@ __all__ = [
     "FontConfig",
     "IconProvider",
     "ThemeManager",
+    "load_fantasy_fonts",
     # Animations
     "ProgressIndicator",
     "TextHighlighter",

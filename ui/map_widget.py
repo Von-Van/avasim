@@ -9,32 +9,32 @@ from PySide6.QtCore import Qt, QTimer
 
 
 class TacticalMapWidget(QGraphicsView):
-    """Enhanced tactical map with professional graphics."""
-    
+    """Enhanced tactical map with fantasy RPG graphics."""
+
     CELL_WIDTH = 32
     CELL_HEIGHT = 32
-    
-    # Terrain colors
+
+    # Terrain colors - Fantasy RPG vibrant palette
     TERRAIN_COLORS = {
-        "wall": QColor("#444444"),
-        "forest": QColor("#2e8b57"),
-        "water": QColor("#3a6ea5"),
-        "mountain": QColor("#7f6f50"),
-        "road": QColor("#c2a16a"),
-        "normal": QColor("#f0ede6"),
+        "wall": QColor("#4a4a4a"),      # Stone gray
+        "forest": QColor("#2d5a2d"),    # Deep forest green
+        "water": QColor("#3a5f8a"),     # Deep water blue
+        "mountain": QColor("#6b5d4f"),  # Rocky brown
+        "road": QColor("#a89060"),      # Dusty road tan
+        "normal": QColor("#d4c4a8"),    # Aged parchment/grassland
     }
-    
-    # Highlight colors
-    OCCUPANT_COLOR = QColor("#ffe8c2")      # Light yellow
-    TARGET_COLOR = QColor("#ffd1d1")        # Light red
-    ACTIVE_COLOR = QColor("#c8e6c9")        # Light green
-    RANGE_OVERLAY = QColor(46, 125, 50, 90)  # Green overlay
-    LOS_OVERLAY = QColor(30, 80, 160, 70)    # Blue overlay
-    BLOCKED_OVERLAY = QColor(110, 110, 110, 80)  # Gray overlay
-    PATH_OVERLAY = QColor(244, 162, 97, 120)     # Orange overlay
-    MOVE_HIGHLIGHT = QColor(76, 175, 80, 80)     # Green move highlight
-    ATTACK_HIGHLIGHT = QColor(229, 57, 53, 60)   # Red attack highlight
-    SELECTED_BORDER = QColor("#FFD700")           # Gold selection border
+
+    # Highlight colors - Medieval fantasy theme
+    OCCUPANT_COLOR = QColor("#d4af37")      # Gold for occupied
+    TARGET_COLOR = QColor("#b8621b")        # Rust orange for target
+    ACTIVE_COLOR = QColor("#5a8359")        # Forest green for active
+    RANGE_OVERLAY = QColor(90, 131, 89, 100)   # Forest green overlay
+    LOS_OVERLAY = QColor(58, 95, 138, 90)      # Blue overlay
+    BLOCKED_OVERLAY = QColor(139, 69, 46, 100) # Brown overlay
+    PATH_OVERLAY = QColor(212, 175, 55, 120)   # Gold path overlay
+    MOVE_HIGHLIGHT = QColor(90, 131, 89, 100)  # Green move highlight
+    ATTACK_HIGHLIGHT = QColor(139, 46, 46, 90) # Crimson attack highlight
+    SELECTED_BORDER = QColor("#d4af37")        # Gold selection border
     
     def __init__(self, width=10, height=10, parent=None):
         super().__init__(parent)
