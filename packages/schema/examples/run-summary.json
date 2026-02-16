@@ -1,0 +1,55 @@
+{
+  "schema_version": "0.1.0",
+  "run_id": "simple-duel-001",
+  "engine_version": "0.1.0-python",
+  "seed": 12345,
+  "outcome": "victory",
+  "winning_team": "party",
+  "participants": [
+    {
+      "name": "Warrior",
+      "team": "party",
+      "final_hp": 18,
+      "max_hp": 35,
+      "is_alive": true,
+      "damage_dealt": 15,
+      "damage_taken": 17,
+      "kills": 1,
+      "turns_taken": 4,
+      "status_effects": []
+    },
+    {
+      "name": "Goblin",
+      "team": "enemies",
+      "final_hp": 0,
+      "max_hp": 12,
+      "is_alive": false,
+      "damage_dealt": 8,
+      "damage_taken": 15,
+      "kills": 0,
+      "turns_taken": 3,
+      "status_effects": ["dead"]
+    }
+  ],
+  "statistics": {
+    "total_rounds": 4,
+    "total_turns": 7,
+    "total_damage": 23,
+    "total_attacks": 6,
+    "total_hits": 4,
+    "total_criticals": 0,
+    "total_deaths": 1,
+    "average_damage_per_hit": 5.75,
+    "hit_rate": 0.667
+  },
+  "execution": {
+    "started_at": "2026-02-16T10:30:00.000Z",
+    "completed_at": "2026-02-16T10:30:01.234Z",
+    "duration_ms": 1234,
+    "event_count": 42
+  },
+  "metadata": {
+    "scenario_name": "Simple Duel",
+    "tags": ["test", "baseline"]
+  }
+}

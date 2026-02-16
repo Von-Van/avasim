@@ -1,0 +1,21 @@
+{
+  "name": "10_full_combat",
+  "description": "Full combat to defeat",
+  "seed": 11111,
+  "input": {
+    "fighter": {
+      "hp": 30,
+      "strength": 4
+    },
+    "target": {
+      "hp": 10
+    }
+  },
+  "expected_output": {
+    "fighter_alive": true,
+    "target_alive": false,
+    "fighter_hp": 30,
+    "target_hp": 0,
+    "turns_elapsed": 4
+  }
+}

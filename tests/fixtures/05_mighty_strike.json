@@ -1,0 +1,32 @@
+{
+  "name": "05_mighty_strike",
+  "description": "Mighty Strike knockback",
+  "seed": 56789,
+  "input": {
+    "attacker": {
+      "feats": [
+        "Mighty Strike"
+      ],
+      "weapon": "Greatsword",
+      "position": [
+        7,
+        7
+      ]
+    },
+    "defender": {
+      "initial_position": [
+        8,
+        7
+      ]
+    }
+  },
+  "expected_output": {
+    "hit": false,
+    "defender_position": [
+      8,
+      7
+    ],
+    "defender_hp": 20,
+    "position_changed": false
+  }
+}

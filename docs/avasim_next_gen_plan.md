@@ -11,6 +11,8 @@ This document defines the target architecture and delivery path for a new, optim
 
 It is written for both human engineers and agentic AI systems that need clear, bounded, executable steps.
 
+Companion visual reference: `docs/avasim_visual_schema.md`.
+
 ## 2. Product Vision (Target State)
 
 ### Primary outcomes

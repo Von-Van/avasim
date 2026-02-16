@@ -1,0 +1,24 @@
+{
+  "name": "07_terrain_cover",
+  "description": "Forest terrain cover bonus",
+  "seed": 78901,
+  "input": {
+    "attacker": {
+      "position": [
+        0,
+        0
+      ]
+    },
+    "defender": {
+      "position": [
+        10,
+        0
+      ],
+      "terrain": "forest"
+    }
+  },
+  "expected_output": {
+    "cover_type": "half",
+    "defender_hp": 20
+  }
+}

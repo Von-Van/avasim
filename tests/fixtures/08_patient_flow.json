@@ -1,0 +1,35 @@
+{
+  "name": "08_patient_flow",
+  "description": "Patient Flow attack redirection",
+  "seed": 89012,
+  "input": {
+    "monk": {
+      "feats": [
+        "Patient Flow"
+      ],
+      "position": [
+        5,
+        5
+      ]
+    },
+    "attacker": {
+      "position": [
+        4,
+        5
+      ]
+    },
+    "bystander": {
+      "position": [
+        6,
+        5
+      ]
+    }
+  },
+  "expected_output": {
+    "monk_flowing": true,
+    "monk_hp": 20,
+    "bystander_hp": 19,
+    "monk_took_damage": false,
+    "bystander_took_damage": true
+  }
+}

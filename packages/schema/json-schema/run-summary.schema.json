@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://avasim.dev/schemas/run-summary/v0.1.0",
+  "title": "RunSummary",
+  "description": "Schema for AvaSim run completion summary",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "engine_version",
+    "seed",
+    "outcome",
+    "participants",
+    "statistics",
+    "execution"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "engine_version": {
+      "type": "string",
+      "description": "Simulation engine version (semver)"
+    },
+    "seed": {
+      "type": "integer",
+      "description": "RNG seed used for this run"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["victory", "defeat", "draw", "timeout"]
+    },
+    "winning_team": {
+      "type": "string",
+      "description": "Team that won (if outcome is victory/defeat)"
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/ParticipantFinalState"
+      }
+    },
+    "statistics": {
+      "$ref": "#/definitions/RunStatistics"
+    },
+    "execution": {
+      "type": "object",
+      "required": ["started_at", "completed_at", "duration_ms", "event_count"],
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata from request"
+    }
+  },
+  "definitions": {
+    "ParticipantFinalState": {
+      "type": "object",
+      "required": [
+        "name",
+        "team",
+        "final_hp",
+        "max_hp",
+        "is_alive",
+        "damage_dealt",
+        "damage_taken",
+        "kills",
+        "turns_taken",
+        "status_effects"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "team": { "type": "string" },
+        "final_hp": { "type": "integer" },
+        "max_hp": { "type": "integer" },
+        "is_alive": { "type": "boolean" },
+        "final_position": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "damage_dealt": { "type": "number", "minimum": 0 },
+        "damage_taken": { "type": "number", "minimum": 0 },
+        "kills": { "type": "integer", "minimum": 0 },
+        "turns_taken": { "type": "integer", "minimum": 0 },
+        "status_effects": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "RunStatistics": {
+      "type": "object",
+      "required": [
+        "total_rounds",
+        "total_turns",
+        "total_damage",
+        "total_attacks",
+        "total_hits",
+        "total_criticals",
+        "total_deaths",
+        "average_damage_per_hit",
+        "hit_rate"
+      ],
+      "properties": {
+        "total_rounds": { "type": "integer", "minimum": 0 },
+        "total_turns": { "type": "integer", "minimum": 0 },
+        "total_damage": { "type": "number", "minimum": 0 },
+        "total_attacks": { "type": "integer", "minimum": 0 },
+        "total_hits": { "type": "integer", "minimum": 0 },
+        "total_criticals": { "type": "integer", "minimum": 0 },
+        "total_deaths": { "type": "integer", "minimum": 0 },
+        "average_damage_per_hit": { "type": "number", "minimum": 0 },
+        "hit_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

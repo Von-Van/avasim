@@ -1,0 +1,19 @@
+{
+  "name": "04_status_effects",
+  "description": "Hamstring applying SLOWED status",
+  "seed": 45678,
+  "input": {
+    "attacker": {
+      "feats": [
+        "Hamstring"
+      ],
+      "weapon": "Crossbow"
+    },
+    "defender": {}
+  },
+  "expected_output": {
+    "hit": false,
+    "defender_has_slowed": false,
+    "defender_hp": 20
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "09_control_knockback",
+  "description": "Control knockback into wall",
+  "seed": 90123,
+  "input": {
+    "attacker": {
+      "feats": [
+        "Control"
+      ],
+      "weapon": "Greatsword",
+      "position": [
+        5,
+        5
+      ]
+    },
+    "defender": {
+      "position": [
+        4,
+        5
+      ]
+    },
+    "wall_at": "x=2"
+  },
+  "expected_output": {
+    "hit": true,
+    "defender_hp": 12,
+    "defender_position": [
+      3,
+      5
+    ],
+    "damage_dealt": 8
+  }
+}

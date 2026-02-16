@@ -1,0 +1,90 @@
+{
+  "schema_version": "0.1.0",
+  "seed": 98765,
+  "participants": [
+    {
+      "name": "Ranger",
+      "level": 2,
+      "attributes": {
+        "might": 2,
+        "finesse": 4,
+        "guile": 3,
+        "insight": 2,
+        "resolve": 2
+      },
+      "hp": {
+        "max": 28
+      },
+      "equipment": {
+        "weapon_main": "longbow",
+        "armor": "leather"
+      },
+      "feats": ["patient_flow"],
+      "team": "party"
+    },
+    {
+      "name": "Orc",
+      "level": 2,
+      "attributes": {
+        "might": 4,
+        "finesse": 1,
+        "guile": 1,
+        "insight": 1,
+        "resolve": 3
+      },
+      "hp": {
+        "max": 32
+      },
+      "equipment": {
+        "weapon_main": "greataxe"
+      },
+      "team": "enemies",
+      "creature_type": "Orc"
+    }
+  ],
+  "map": {
+    "width": 8,
+    "height": 8,
+    "cells": [
+      { "x": 0, "y": 0, "terrain": "wall" },
+      { "x": 1, "y": 0, "terrain": "wall" },
+      { "x": 2, "y": 0, "terrain": "wall" },
+      { "x": 3, "y": 0, "terrain": "wall" },
+      { "x": 4, "y": 0, "terrain": "wall" },
+      { "x": 5, "y": 0, "terrain": "wall" },
+      { "x": 6, "y": 0, "terrain": "wall" },
+      { "x": 7, "y": 0, "terrain": "wall" },
+      { "x": 0, "y": 1, "terrain": "wall" },
+      { "x": 1, "y": 1, "terrain": "floor" },
+      { "x": 2, "y": 1, "terrain": "floor" },
+      { "x": 3, "y": 1, "terrain": "cover" },
+      { "x": 4, "y": 1, "terrain": "floor" },
+      { "x": 5, "y": 1, "terrain": "floor" },
+      { "x": 6, "y": 1, "terrain": "floor" },
+      { "x": 7, "y": 1, "terrain": "wall" },
+      { "x": 0, "y": 2, "terrain": "wall" },
+      { "x": 1, "y": 2, "terrain": "floor" },
+      { "x": 2, "y": 2, "terrain": "floor" },
+      { "x": 3, "y": 2, "terrain": "floor" },
+      { "x": 4, "y": 2, "terrain": "floor" },
+      { "x": 5, "y": 2, "terrain": "floor" },
+      { "x": 6, "y": 2, "terrain": "floor" },
+      { "x": 7, "y": 2, "terrain": "wall" }
+    ]
+  },
+  "initial_positions": [
+    {
+      "character_name": "Ranger",
+      "position": [1, 1]
+    },
+    {
+      "character_name": "Orc",
+      "position": [6, 1]
+    }
+  ],
+  "config": {
+    "max_rounds": 15,
+    "capture_snapshots": true,
+    "log_level": "verbose"
+  }
+}

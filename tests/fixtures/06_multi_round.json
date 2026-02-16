@@ -1,0 +1,14 @@
+{
+  "name": "06_multi_round",
+  "description": "Multi-round combat",
+  "seed": 67890,
+  "input": {
+    "combatants": 2,
+    "turns": 3
+  },
+  "expected_output": {
+    "fighter1_hp": 16,
+    "fighter2_hp": 16,
+    "round_count": 2
+  }
+}

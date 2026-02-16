@@ -1,0 +1,147 @@
+[
+  {
+    "event_id": "evt_001",
+    "type": "run_started",
+    "timestamp": "2026-02-16T10:30:00.000Z",
+    "round": 0,
+    "message": "Run started with seed 12345",
+    "data": {
+      "run_id": "simple-duel-001",
+      "seed": 12345,
+      "engine_version": "0.1.0-python",
+      "participants": ["Warrior", "Goblin"]
+    }
+  },
+  {
+    "event_id": "evt_002",
+    "type": "round_started",
+    "timestamp": "2026-02-16T10:30:00.050Z",
+    "round": 1,
+    "message": "Round 1 begins",
+    "data": {
+      "round": 1,
+      "turn_order": ["Warrior", "Goblin"]
+    }
+  },
+  {
+    "event_id": "evt_003",
+    "type": "turn_started",
+    "timestamp": "2026-02-16T10:30:00.100Z",
+    "round": 1,
+    "turn_index": 0,
+    "message": "Warrior's turn (2 actions available)",
+    "data": {
+      "actor": "Warrior",
+      "actions_available": 2
+    }
+  },
+  {
+    "event_id": "evt_004",
+    "type": "attack",
+    "timestamp": "2026-02-16T10:30:00.200Z",
+    "round": 1,
+    "turn_index": 0,
+    "message": "Warrior attacks Goblin with longsword (roll: 15 vs 12) - HIT!",
+    "data": {
+      "attacker": "Warrior",
+      "defender": "Goblin",
+      "weapon": "longsword",
+      "attack_roll": 15,
+      "dice_values": [7, 8],
+      "defense_value": 12,
+      "hit": true,
+      "critical": false,
+      "modifiers": [
+        { "name": "Might bonus", "value": 2 },
+        { "name": "Weapon skill", "value": 1 }
+      ]
+    }
+  },
+  {
+    "event_id": "evt_005",
+    "type": "damage",
+    "timestamp": "2026-02-16T10:30:00.250Z",
+    "round": 1,
+    "turn_index": 0,
+    "message": "Goblin takes 7 damage (5 absorbed by armor) -> 12 HP",
+    "data": {
+      "source": "Warrior",
+      "target": "Goblin",
+      "damage_type": "slashing",
+      "damage_amount": 7,
+      "damage_mitigated": 5,
+      "hp_before": 19,
+      "hp_after": 12
+    }
+  },
+  {
+    "event_id": "evt_006",
+    "type": "movement",
+    "timestamp": "2026-02-16T10:30:00.300Z",
+    "round": 1,
+    "turn_index": 1,
+    "message": "Goblin moves from (3,3) to (5,3) - distance 2",
+    "data": {
+      "actor": "Goblin",
+      "from": [3, 3],
+      "to": [5, 3],
+      "distance": 2,
+      "opportunity_attacks": []
+    }
+  },
+  {
+    "event_id": "evt_007",
+    "type": "status_effect",
+    "timestamp": "2026-02-16T10:30:00.400Z",
+    "round": 2,
+    "turn_index": 0,
+    "message": "Warrior applies prone to Goblin",
+    "data": {
+      "target": "Goblin",
+      "effect": "prone",
+      "applied": true,
+      "duration": 1,
+      "source": "Warrior"
+    }
+  },
+  {
+    "event_id": "evt_008",
+    "type": "feat_activation",
+    "timestamp": "2026-02-16T10:30:00.500Z",
+    "round": 3,
+    "turn_index": 0,
+    "message": "Warrior activates Mighty Strike",
+    "data": {
+      "actor": "Warrior",
+      "feat_name": "Mighty Strike",
+      "target": "Goblin",
+      "effect_description": "Next attack deals +4 damage"
+    }
+  },
+  {
+    "event_id": "evt_009",
+    "type": "death",
+    "timestamp": "2026-02-16T10:30:01.000Z",
+    "round": 4,
+    "turn_index": 0,
+    "message": "Goblin has been slain by Warrior",
+    "data": {
+      "character": "Goblin",
+      "killer": "Warrior",
+      "death_save_failures": 0
+    }
+  },
+  {
+    "event_id": "evt_010",
+    "type": "run_completed",
+    "timestamp": "2026-02-16T10:30:01.100Z",
+    "round": 4,
+    "message": "Run completed - party victory",
+    "data": {
+      "run_id": "simple-duel-001",
+      "outcome": "victory",
+      "winning_team": "party",
+      "total_rounds": 4
+    }
+  }
+]

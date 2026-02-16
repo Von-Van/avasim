@@ -1,0 +1,33 @@
+{
+  "name": "03_movement_oa",
+  "description": "Movement triggering opportunity attack",
+  "seed": 34567,
+  "input": {
+    "defender": {
+      "weapon": "Polearm",
+      "feats": [
+        "Steadfast Defender"
+      ],
+      "position": [
+        5,
+        5
+      ]
+    },
+    "mover": {
+      "initial_hp": 20,
+      "position": [
+        4,
+        5
+      ]
+    },
+    "action": "move to [1, 5]"
+  },
+  "expected_output": {
+    "mover_hp": 20,
+    "mover_position": [
+      1,
+      5
+    ],
+    "hp_changed": false
+  }
+}

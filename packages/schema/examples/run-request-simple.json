@@ -1,0 +1,63 @@
+{
+  "schema_version": "0.1.0",
+  "run_id": "simple-duel-001",
+  "seed": 12345,
+  "participants": [
+    {
+      "name": "Warrior",
+      "level": 3,
+      "attributes": {
+        "might": 4,
+        "finesse": 2,
+        "guile": 1,
+        "insight": 2,
+        "resolve": 3
+      },
+      "hp": {
+        "max": 35,
+        "current": 35
+      },
+      "equipment": {
+        "weapon_main": "longsword",
+        "armor": "chainmail",
+        "shield": "round_shield"
+      },
+      "feats": ["mighty_strike", "shield_wall"],
+      "team": "party"
+    },
+    {
+      "name": "Goblin",
+      "level": 1,
+      "attributes": {
+        "might": 2,
+        "finesse": 3,
+        "guile": 2,
+        "insight": 1,
+        "resolve": 1
+      },
+      "hp": {
+        "max": 12,
+        "current": 12
+      },
+      "equipment": {
+        "weapon_main": "shortbow"
+      },
+      "team": "enemies",
+      "creature_type": "Goblinoid"
+    }
+  ],
+  "environment": {
+    "time_of_day": "day",
+    "underwater": false
+  },
+  "config": {
+    "max_rounds": 20,
+    "capture_snapshots": true,
+    "log_level": "standard"
+  },
+  "metadata": {
+    "scenario_name": "Simple Duel",
+    "description": "Basic 1v1 combat test",
+    "tags": ["test", "baseline"]
+  }
+}

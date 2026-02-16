@@ -7,10 +7,11 @@ from .items import Weapon, Armor, Shield, AVALORE_WEAPONS, AVALORE_ARMOR, AVALOR
 from .feats import Feat, AVALORE_FEATS
 from .spells import Spell, AVALORE_SPELLS
 from .enums import TerrainType, RangeCategory, ArmorCategory, ShieldType, StatusEffect, validate_loadout
-from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6
+from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6, set_seed
 from .feat_handlers import FeatHandler, FeatRegistry, FEAT_REGISTRY
 from .ai import CombatAI, STRATEGY_DEFAULTS
 from .batch import BatchRunner, BatchConfig, BatchResult
+from .events import EventEmitter
 
 __all__ = [
     "AvaCombatEngine",
@@ -22,8 +23,9 @@ __all__ = [
     "Spell", "AVALORE_SPELLS",
     "TerrainType", "RangeCategory", "ArmorCategory", "ShieldType", "StatusEffect",
     "validate_loadout",
-    "roll_2d10", "roll_1d2", "roll_1d3", "roll_1d6",
+    "roll_2d10", "roll_1d2", "roll_1d3", "roll_1d6", "set_seed",
     "FeatHandler", "FeatRegistry", "FEAT_REGISTRY",
     "CombatAI", "STRATEGY_DEFAULTS",
     "BatchRunner", "BatchConfig", "BatchResult",
+    "EventEmitter",
 ]

@@ -1,0 +1,223 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://avasim.dev/schemas/run-request/v0.1.0",
+  "title": "RunRequest",
+  "description": "Schema for initiating an AvaSim combat simulation run",
+  "type": "object",
+  "required": ["schema_version", "seed", "participants"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema version (semver format)"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Optional run identifier (auto-generated if omitted)"
+    },
+    "seed": {
+      "type": "integer",
+      "description": "Deterministic RNG seed for reproducible results"
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/definitions/CharacterBuild"
+      },
+      "description": "Array of character builds participating in combat"
+    },
+    "map": {
+      "$ref": "#/definitions/TacticalMapConfig",
+      "description": "Optional tactical map configuration"
+    },
+    "initial_positions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ParticipantPosition"
+      },
+      "description": "Optional initial positions for participants"
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "time_of_day": {
+          "type": "string",
+          "enum": ["day", "night"],
+          "default": "day"
+        },
+        "underwater": {
+          "type": "boolean",
+          "default": false
+        },
+        "party_initiated": {
+          "type": "boolean",
+          "default": false
+        },
+        "party_surprised": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Environment and combat context configuration"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum rounds before timeout"
+        },
+        "capture_snapshots": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable map snapshot events"
+        },
+        "log_level": {
+          "type": "string",
+          "enum": ["minimal", "standard", "verbose"],
+          "default": "standard"
+        }
+      },
+      "description": "Run execution configuration"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Optional metadata for orchestrator tracking"
+    }
+  },
+  "definitions": {
+    "CharacterBuild": {
+      "type": "object",
+      "required": ["name", "level", "attributes", "hp", "team"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "attributes": {
+          "type": "object",
+          "required": ["might", "finesse", "guile", "insight", "resolve"],
+          "properties": {
+            "might": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "finesse": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "guile": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "insight": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "resolve": { "type": "integer", "minimum": 1, "maximum": 10 }
+          }
+        },
+        "hp": {
+          "type": "object",
+          "required": ["max"],
+          "properties": {
+            "max": { "type": "integer", "minimum": 1 },
+            "current": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "anima": {
+          "type": "object",
+          "properties": {
+            "max": { "type": "integer", "minimum": 0 },
+            "current": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "equipment": {
+          "type": "object",
+          "properties": {
+            "weapon_main": { "type": "string" },
+            "weapon_offhand": { "type": "string" },
+            "armor": { "type": "string" },
+            "shield": { "type": "string" }
+          }
+        },
+        "feats": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "spells": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "lineage": {
+          "type": "object",
+          "properties": {
+            "weapon": { "type": "string" },
+            "weapon_alt": { "type": "string" },
+            "elements": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "team": {
+          "type": "string",
+          "minLength": 1
+        },
+        "creature_type": {
+          "type": "string",
+          "default": "Humanoid"
+        }
+      }
+    },
+    "TacticalMapConfig": {
+      "type": "object",
+      "required": ["width", "height", "cells"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MapCell"
+          }
+        }
+      }
+    },
+    "MapCell": {
+      "type": "object",
+      "required": ["x", "y", "terrain"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "terrain": {
+          "type": "string",
+          "enum": ["floor", "wall", "water", "difficult", "cover"]
+        },
+        "occupant": {
+          "type": ["string", "null"],
+          "description": "Character name if cell is occupied"
+        }
+      }
+    },
+    "ParticipantPosition": {
+      "type": "object",
+      "required": ["character_name", "position"],
+      "properties": {
+        "character_name": { "type": "string" },
+        "position": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  }
+}

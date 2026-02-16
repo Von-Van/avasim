@@ -1,0 +1,29 @@
+{
+  "name": "02_ranged_los",
+  "description": "Ranged combat with line of sight",
+  "seed": 23456,
+  "input": {
+    "attacker": {
+      "name": "Archer",
+      "weapon": "Longbow",
+      "position": [
+        0,
+        5
+      ]
+    },
+    "defender": {
+      "position": [
+        15,
+        5
+      ]
+    },
+    "actions": [
+      "attack",
+      "attack"
+    ]
+  },
+  "expected_output": {
+    "defender_hp": 8,
+    "attacker_actions_remaining": 4
+  }
+}
