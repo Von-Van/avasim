@@ -31,6 +31,8 @@ class StatusEffect(Enum):
     MARKED = auto()
     VULNERABLE = auto()
     HIDDEN = auto()
+    GRAPPLED = auto()
+    BLEEDOUT = auto()
 
 MAX_WEAPONS = 2
 MAX_SMALL_FLEX = 1

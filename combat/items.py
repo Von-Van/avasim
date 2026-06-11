@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
+from .catalog import load_catalog
 from .enums import RangeCategory, ArmorCategory, ShieldType
 from .dice import roll_1d2, roll_1d4
 
@@ -148,3 +149,37 @@ AVALORE_SHIELDS = {
     "Small Shield": Shield(name="Small Shield", shield_type=ShieldType.SMALL, block_modifier=-3, grants_ap_immunity=False, stat_requirements={"Dexterity:Finesse": 2, "Strength:Athletics": 2}, description="A buckler. 2d10-3 to block, requires DEX:Finesse 2 and STR:Athletics 2."),
     "Large Shield": Shield(name="Large Shield", shield_type=ShieldType.LARGE, block_modifier=-2, grants_ap_immunity=True, stat_requirements={"Strength:Athletics": 2, "Strength:Fortitude": 2}, description="A tower shield. 2d10-2 to block, grants AP immunity, requires STR:Athletics 2 and STR:Fortitude 2."),
 }
+
+
+def _load_item_catalogs() -> None:
+    global AVALORE_WEAPONS, AVALORE_ARMOR, AVALORE_SHIELDS
+
+    weapons = load_catalog("weapons").get("entries")
+    if weapons:
+        loaded_weapons = {}
+        for entry in weapons:
+            data = dict(entry)
+            data["range_category"] = RangeCategory(data.get("range_category", RangeCategory.MELEE.value))
+            loaded_weapons[data["name"]] = Weapon(**data)
+        AVALORE_WEAPONS = loaded_weapons
+
+    armor = load_catalog("armor").get("entries")
+    if armor:
+        loaded_armor = {}
+        for entry in armor:
+            data = dict(entry)
+            data["category"] = ArmorCategory(data.get("category", ArmorCategory.NONE.value))
+            loaded_armor[data["name"]] = Armor(**data)
+        AVALORE_ARMOR = loaded_armor
+
+    shields = load_catalog("shields").get("entries")
+    if shields:
+        loaded_shields = {}
+        for entry in shields:
+            data = dict(entry)
+            data["shield_type"] = ShieldType(data.get("shield_type", ShieldType.SMALL.value))
+            loaded_shields[data["name"]] = Shield(**data)
+        AVALORE_SHIELDS = loaded_shields
+
+
+_load_item_catalogs()

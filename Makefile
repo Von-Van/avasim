@@ -1,4 +1,4 @@
-.PHONY: test test-baseline test-all help docker-up docker-down docker-logs docker-clean
+.PHONY: test test-baseline test-all benchmark-analysis help docker-up docker-down docker-logs docker-clean
 
 help:
 	@echo "AvaSim Development Commands"
@@ -6,6 +6,7 @@ help:
 	@echo "Testing:"
 	@echo "  make test-baseline     Run Phase 0 baseline regression tests"
 	@echo "  make test-all          Run all tests (baseline + feature tests)"
+	@echo "  make benchmark-analysis Run the canonical Python batch benchmark"
 	@echo "  make generate-fixtures Regenerate baseline fixtures (BE CAREFUL!)"
 	@echo ""
 	@echo "Docker Stack (Phase 1+):"
@@ -22,6 +23,10 @@ test-baseline:
 test-all:
 	@echo "Running all tests..."
 	python -m unittest discover -s . -p 'test_*.py' -v
+
+benchmark-analysis:
+	@echo "Running canonical Python analysis benchmark..."
+	python scripts/benchmark_analysis.py --runs 1000 --seed 12345 --parallelism 1
 
 generate-fixtures:
 	@echo "⚠️  Regenerating baseline fixtures - this will overwrite existing baselines!"

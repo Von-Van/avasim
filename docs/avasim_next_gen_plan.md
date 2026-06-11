@@ -1,5 +1,7 @@
 # AvaSim Next-Gen Build Plan
 
+> Status: frozen experimental reference. The canonical runtime is currently the PySide desktop app plus the pure-Python combat/analysis core. Do not extend the TypeScript orchestrator, Rust service, containers, or shared schema until the Python runtime contract in `docs/analysis_core.md` is stable.
+
 ## 1. Document Purpose
 
 This document defines the target architecture and delivery path for a new, optimized AvaSim that:

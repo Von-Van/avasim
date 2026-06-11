@@ -1,0 +1,39 @@
+{
+  "entries": [
+    {
+      "category": "light",
+      "description": "Leather or padded armor. 1d2-1 protection (0-1 soak), no penalties.",
+      "evasion_penalty": 0,
+      "movement_penalty": 0,
+      "name": "Light Armor",
+      "stat_requirements": {
+        "Dexterity:Acrobatics": -1
+      },
+      "stealth_penalty": 0
+    },
+    {
+      "category": "medium",
+      "description": "Chain, scale, breastplate. 1d4-1 protection (0-3 soak), -1 evasion. If not meeting requirement: -2 movement, -1 additional soak penalty.",
+      "evasion_penalty": -1,
+      "movement_penalty": 0,
+      "name": "Medium Armor",
+      "stat_requirements": {
+        "Strength:Athletics": 1
+      },
+      "stealth_penalty": 0
+    },
+    {
+      "category": "heavy",
+      "description": "Full plate. 1d4 protection (1-4 soak), -2 evasion, -3 stealth, -2 movement. If not meeting requirement: -2 additional movement, -1 additional soak penalty.",
+      "evasion_penalty": -2,
+      "movement_penalty": -2,
+      "name": "Heavy Armor",
+      "stat_requirements": {
+        "Strength:Athletics": 3
+      },
+      "stealth_penalty": -3
+    }
+  ],
+  "kind": "armor",
+  "version": "1.0.0"
+}

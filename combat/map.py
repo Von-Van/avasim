@@ -154,5 +154,9 @@ class TacticalMap:
         if tile:
             tile.occupant = occupant
 
+    def get_occupant(self, x: int, y: int) -> Optional[Any]:
+        tile = self.get_tile(x, y)
+        return tile.occupant if tile else None
+
     def clear_occupant(self, x: int, y: int):
         self.set_occupant(x, y, None)

@@ -99,6 +99,13 @@ class FeatHandler:
         """Called after a successful block. Called for DEFENDER's feats."""
         pass
 
+    def on_taking_hit(self, engine: AvaCombatEngine, defender: CombatParticipant,
+                      attacker: CombatParticipant, weapon: Weapon,
+                      result: Dict[str, Any]) -> None:
+        """Called after a hit lands on the defender (hit/graze/crit), once damage
+        has been applied. Called for the DEFENDER's feats (e.g. Acidic Blood)."""
+        pass
+
     # --- Turn lifecycle hooks ---
 
     def on_turn_start(self, engine: AvaCombatEngine, participant: CombatParticipant) -> None:
@@ -229,6 +236,13 @@ class FeatRegistry:
         for h in self.handlers_for(defender):
             h.on_block_success(engine, defender, attacker)
 
+    def dispatch_on_taking_hit(self, engine: AvaCombatEngine,
+                               defender: CombatParticipant,
+                               attacker: CombatParticipant,
+                               weapon: 'Weapon', result: Dict[str, Any]) -> None:
+        for h in self.handlers_for(defender):
+            h.on_taking_hit(engine, defender, attacker, weapon, result)
+
     def dispatch_on_turn_start(self, engine: AvaCombatEngine,
                                 participant: CombatParticipant) -> None:
         for h in self.handlers_for(participant):
@@ -351,16 +365,6 @@ class PreciseSensesHandler(FeatHandler):
             ctx["precise_senses_restored"] = penalty_removed
         # Don't add here - we prevent the penalty from being applied in the first place
         # The engine applies the penalties, then we restore them
-        return total
-
-
-class ParryHandler(FeatHandler):
-    feat_name = "Parry"
-
-    def modify_defense_roll(self, engine, attacker, defender, weapon, total, ctx):
-        if defender.can_use_limited("Parry"):
-            engine.log(f"{defender.character.name} parries, reducing attack by 2 (now {total - 2}).")
-            return total - 2
         return total
 
 
@@ -601,6 +605,86 @@ class SkirmishingPartyHandler(FeatHandler):
 
 
 # ============================================================================
+# Newly wired feats (Combat / Mutation / Vampiric)
+# ============================================================================
+
+class MartialDisciplineHandler(FeatHandler):
+    """Block -> stacking +1 aim to Arming Sword attacks next turn (with a Shield)."""
+    feat_name = "Martial Discipline"
+
+    def on_block_success(self, engine, defender, attacker):
+        defender.martial_discipline_next += 1
+        engine.log(f"{defender.character.name} (Martial Discipline) banks +{defender.martial_discipline_next} Arming Sword aim for next turn.")
+
+    def modify_attack_roll(self, engine, attacker, defender, weapon, total, ctx):
+        if (attacker.martial_discipline_stacks > 0 and attacker.shield is not None
+                and weapon is not None and weapon.name == "Arming Sword"):
+            return total + attacker.martial_discipline_stacks
+        return total
+
+
+class VampiricSpeedHandler(FeatHandler):
+    """+1 evasion, and a free Dash after a successful Block or Evade."""
+    feat_name = "Vampiric Speed"
+
+    def modify_evasion(self, engine, defender, weapon, current_bonus, context):
+        return current_bonus + 1
+
+    def on_evade_success(self, engine, defender, attacker, weapon):
+        defender.free_move_used = False  # free immediate Dash
+
+    def on_block_success(self, engine, defender, attacker):
+        defender.free_move_used = False
+
+
+class AmbushPredatorHandler(FeatHandler):
+    """First round of combat: +1 against targets who have not yet taken a turn."""
+    feat_name = "Ambush Predator"
+
+    def modify_attack_roll(self, engine, attacker, defender, weapon, total, ctx):
+        if getattr(engine, "round", 1) == 1 and defender is not None and not defender.has_taken_turn:
+            return total + 1
+        return total
+
+
+class WoundedAnimalHandler(FeatHandler):
+    """Once per scene, self-stabilize for free at the start of a Bleedout turn."""
+    feat_name = "Wounded Animal"
+
+    def on_turn_start(self, engine, participant):
+        if (participant.in_bleedout and not participant.stabilized
+                and not participant.wounded_animal_used_scene):
+            participant.stabilized = True
+            participant.wounded_animal_used_scene = True
+            engine.log(f"{participant.character.name} (Wounded Animal) self-stabilizes during Bleedout.")
+
+
+class RageHandler(FeatHandler):
+    """+1 damage on every hit while Rage is active."""
+    feat_name = "Rage"
+
+    def modify_damage(self, engine, attacker, defender, weapon, current_damage, ctx):
+        if attacker.rage_active:
+            return current_damage + 1
+        return current_damage
+
+
+class AcidicBloodHandler(FeatHandler):
+    """Reflect damage to a melee attacker that lands a hit (2 AP on a crit)."""
+    feat_name = "Acidic Blood"
+
+    def on_taking_hit(self, engine, defender, attacker, weapon, result):
+        if engine.tactical_map and engine.get_distance(defender, attacker) > 1:
+            return
+        if result.get("is_crit"):
+            dmg, ap = 2, True
+        else:
+            dmg, ap = 1, False
+        attacker.take_damage(dmg, armor_piercing=ap)
+        engine.log(f"{attacker.character.name} is seared by {defender.character.name}'s Acidic Blood for {dmg}{' AP' if ap else ''} damage.")
+
+
+# ============================================================================
 # Utility: StatusEffect access
 # ============================================================================
 
@@ -623,7 +707,6 @@ def build_default_registry() -> FeatRegistry:
     registry.register(LineageWeaponHandler())
     registry.register(LWQuestingBaneHandler())
     registry.register(PreciseSensesHandler())
-    registry.register(ParryHandler())
     registry.register(RakishCombinationHandler())
     registry.register(BacklineFlankerHandler())
     registry.register(AberrationSlayerHandler())
@@ -646,6 +729,14 @@ def build_default_registry() -> FeatRegistry:
     registry.register(FirstStrikeHandler())
     registry.register(AlwaysReadyHandler())
     registry.register(SkirmishingPartyHandler())
+
+    # Mutation / Vampiric / newly wired combat feats
+    registry.register(MartialDisciplineHandler())
+    registry.register(VampiricSpeedHandler())
+    registry.register(AmbushPredatorHandler())
+    registry.register(WoundedAnimalHandler())
+    registry.register(RageHandler())
+    registry.register(AcidicBloodHandler())
 
     return registry
 

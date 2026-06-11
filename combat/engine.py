@@ -1,3 +1,4 @@
+import random
 from typing import List, Optional, Tuple, Any, Set, Dict
 from .participant import CombatParticipant
 from .map import TacticalMap
@@ -9,7 +10,15 @@ from .dice import roll_2d10, roll_1d2, roll_1d3, roll_1d6
 from .feat_handlers import FEAT_REGISTRY, FeatRegistry
 
 class AvaCombatEngine:
-    def __init__(self, participants: List[CombatParticipant], tactical_map: Optional[TacticalMap] = None):
+    def __init__(
+        self,
+        participants: List[CombatParticipant],
+        tactical_map: Optional[TacticalMap] = None,
+        capture_policy: str = "replay",
+        recorder: Optional[Any] = None,
+        rng: Optional[random.Random] = None,
+        emit_stdout: bool = True,
+    ):
         self.participants = participants
         self.round = 0
         self.turn_order: List[CombatParticipant] = []
@@ -24,6 +33,10 @@ class AvaCombatEngine:
         self.time_of_day: str = "day"
         self.tactical_map = tactical_map
         self.feat_registry: FeatRegistry = FEAT_REGISTRY
+        self.capture_policy = capture_policy if capture_policy in {"summary", "events", "replay"} else "replay"
+        self.recorder = recorder
+        self.rng = rng or random.Random()
+        self.emit_stdout = emit_stdout
         if self.tactical_map:
             for p in participants:
                 x, y = p.position
@@ -48,11 +61,14 @@ class AvaCombatEngine:
         return self.set_time_of_day(new_val)
 
     def log(self, message: str):
+        if self.capture_policy == "summary":
+            return
         self.combat_log.append(message)
-        print(message)
+        if self.emit_stdout:
+            print(message)
 
     def _capture_snapshot(self, label: str, actor: Optional[CombatParticipant] = None, target: Optional[CombatParticipant] = None) -> None:
-        if not self.tactical_map:
+        if self.capture_policy != "replay" or not self.tactical_map:
             return
         grid_cells: List[Dict[str, Any]] = []
         for y in range(self.tactical_map.height):
@@ -84,7 +100,7 @@ class AvaCombatEngine:
         self.map_snapshots.append(snap)
 
     def _log_map_state(self, label: str = "Map state") -> None:
-        if not self.tactical_map:
+        if self.capture_policy != "replay" or not self.tactical_map:
             return
         rows: list[str] = []
         for y in range(self.tactical_map.height):
@@ -124,6 +140,30 @@ class AvaCombatEngine:
             opponents = [p for p in self.participants if p is not actor and p.current_hp > 0]
             target = opponents[0] if opponents else None
         self._capture_snapshot(label, actor, target)
+
+    def _finish_attack(
+        self,
+        attacker: CombatParticipant,
+        defender: CombatParticipant,
+        weapon: Weapon,
+        result: Dict[str, Any],
+        hp_before: int,
+    ) -> Dict[str, Any]:
+        if self.recorder is not None:
+            self.recorder.record_attack(
+                self.round,
+                attacker.character.name,
+                defender.character.name,
+                weapon.name,
+                result,
+                hp_before,
+                defender.current_hp,
+                hp_before > 0 and defender.current_hp <= 0,
+            )
+        # Defender's on-hit reactions (e.g. Acidic Blood reflects damage).
+        if result.get("hit"):
+            self.feat_registry.dispatch_on_taking_hit(self, defender, attacker, weapon, result)
+        return result
 
     def get_distance(self, p1: CombatParticipant, p2: CombatParticipant) -> int:
         if not self.tactical_map:
@@ -218,6 +258,11 @@ class AvaCombatEngine:
         allow_death_save = True if allow_death_save_override is None else allow_death_save_override
         miss_result = {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
 
+        # Razor Claws: Unarmed attacks bypass grazing and ignore Quickfooted.
+        if weapon.name == "Unarmed" and attacker.has_feat("Razor Claws"):
+            bypass_graze = True
+            ignore_quickfooted = True
+
         # --- Validation phase ---
         if not self._ensure_can_act(attacker):
             return miss_result
@@ -273,7 +318,20 @@ class AvaCombatEngine:
             self.log(f"{attacker.character.name} lacks actions to attack with {weapon.name}.")
             return miss_result
 
+        # --- Unyielding Reflex: intercept a Ranged projectile (once per round) ---
+        if weapon.range_category == RangeCategory.RANGED:
+            interceptor = self._unyielding_interceptor(defender)
+            if interceptor is not None:
+                interceptor.unyielding_reflex_used_round = True
+                roll, _ = roll_2d10()
+                total = roll + interceptor.character.get_modifier("Dexterity", "Finesse") - 2
+                if total >= 12:
+                    self.log(f"{interceptor.character.name} intercepts the projectile (Unyielding Reflex {total})!")
+                    return self._finish_attack(attacker, defender, weapon, dict(miss_result), defender.current_hp)
+                self.log(f"{interceptor.character.name} fails to intercept the projectile ({total} < 12).")
+
         self.log(f"\n{attacker.character.name} attacks {defender.character.name} with {weapon.name}")
+        defender_hp_before = defender.current_hp
 
         # --- Rakish Combination aim bonus (from previous unarmed hit) ---
         rakish_aim_bonus = 0
@@ -288,6 +346,7 @@ class AvaCombatEngine:
         total_attack = attack_roll + weapon.accuracy_bonus + accuracy_modifier + rakish_aim_bonus + requirement_penalty
         total_attack += getattr(attacker, "temp_attack_bonus", 0)
         total_attack -= getattr(attacker, "mockery_penalty_total", 0)
+        total_attack += attacker.physical_penalty()  # Grappled: -3 to physical rolls
 
         # Environment/status penalties (applied before handler hooks can negate them)
         hidden_penalty = 0
@@ -302,6 +361,20 @@ class AvaCombatEngine:
             darkness_penalty = 0
         total_attack -= hidden_penalty
         total_attack -= darkness_penalty
+
+        # --- Sneak Attack: a Hidden attacker strikes with +1 and cannot be
+        #     Blocked or Evaded. Attacking reveals the attacker; the target may
+        #     negate the sneak with a Perception check. ---
+        is_sneak = attacker.has_status(StatusEffect.HIDDEN)
+        if is_sneak:
+            attacker.clear_status(StatusEffect.HIDDEN)
+            if self._sneak_detected(attacker, defender):
+                self.log(f"{defender.character.name} spots {attacker.character.name}; the Sneak Attack becomes a normal attack.")
+                is_sneak = False
+            else:
+                total_attack += 1
+                self.log(f"Sneak Attack! +1 to hit; cannot be Blocked or Evaded.")
+        attack_ctx["is_sneak"] = is_sneak
 
         # --- Dispatch attacker feat hooks to modify attack roll ---
         total_attack = self.feat_registry.dispatch_modify_attack_roll(
@@ -343,10 +416,10 @@ class AvaCombatEngine:
             crit_result = {"hit": True, "damage": actual_damage, "is_crit": True, "is_graze": False, "blocked": False, "element": attack_element}
             self.feat_registry.dispatch_on_hit(self, attacker, defender, weapon, crit_result)
             self._capture_snapshot(f"Crit: {attacker.character.name}", attacker, defender)
-            return crit_result
+            return self._finish_attack(attacker, defender, weapon, crit_result, defender_hp_before)
 
-        # --- Evasion resolution ---
-        if defender.is_evading:
+        # --- Evasion resolution (a Sneak Attack cannot be evaded) ---
+        if defender.is_evading and not attack_ctx.get("is_sneak"):
             evasion_roll, evasion_dice = roll_2d10()
             qf_bonus = 0 if ignore_quickfooted else defender.get_quickfooted_bonus(weapon, defender.shield)
             evasion_mod = defender.get_evasion_modifier() + qf_bonus
@@ -373,12 +446,24 @@ class AvaCombatEngine:
                             self.log(f"Patient Flow redirects the incoming strike to {alt.character.name}!")
                             self.perform_attack(attacker, alt, weapon=weapon, consume_actions=False, suppress_reactions=True)
                             self._capture_snapshot(f"Redirected: {attacker.character.name}", attacker, defender)
-                            return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+                            return self._finish_attack(
+                                attacker,
+                                defender,
+                                weapon,
+                                {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element},
+                                defender_hp_before,
+                            )
 
                 if not suppress_reactions and not getattr(defender, "reactive_maneuver_used", False):
                     self.maybe_riposte(defender, attacker)
                 self._capture_snapshot(f"Evaded: {attacker.character.name}", attacker, defender)
-                return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+                return self._finish_attack(
+                    attacker,
+                    defender,
+                    weapon,
+                    {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element},
+                    defender_hp_before,
+                )
 
             elif total_evasion >= 12:
                 # Grazing hit
@@ -390,7 +475,13 @@ class AvaCombatEngine:
 
                 if graze_ctx.get("parry_deflected"):
                     self._capture_snapshot(f"Parry: {attacker.character.name}", attacker, defender)
-                    return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False}
+                    return self._finish_attack(
+                        attacker,
+                        defender,
+                        weapon,
+                        {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": False},
+                        defender_hp_before,
+                    )
 
                 if bypass_graze or ("grazing" in weapon.traits):
                     damage = weapon.damage
@@ -408,12 +499,12 @@ class AvaCombatEngine:
                 graze_result = {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": True, "blocked": False, "element": attack_element}
                 self.feat_registry.dispatch_on_hit(self, attacker, defender, weapon, graze_result)
                 self._capture_snapshot(f"Graze: {attacker.character.name}", attacker, defender)
-                return graze_result
+                return self._finish_attack(attacker, defender, weapon, graze_result, defender_hp_before)
             else:
                 self.log(f"Evasion failed (below 12). Attack proceeds normally.")
 
-        # --- Block resolution ---
-        if defender.is_blocking and defender.shield:
+        # --- Block resolution (a Sneak Attack cannot be blocked) ---
+        if defender.is_blocking and defender.shield and not attack_ctx.get("is_sneak"):
             is_ranged = weapon.range_category == RangeCategory.RANGED
             extra_block_bonus = 0
 
@@ -431,7 +522,13 @@ class AvaCombatEngine:
                 if not suppress_reactions:
                     self.maybe_shield_bash(defender, attacker)
                 self._capture_snapshot(f"Blocked: {attacker.character.name}", attacker, defender)
-                return {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": True, "element": attack_element}
+                return self._finish_attack(
+                    attacker,
+                    defender,
+                    weapon,
+                    {"hit": False, "damage": 0, "is_crit": False, "is_graze": False, "blocked": True, "element": attack_element},
+                    defender_hp_before,
+                )
             else:
                 self.log(f"Block failed. Attack proceeds.")
 
@@ -443,7 +540,7 @@ class AvaCombatEngine:
             if attacker.parry_damage_bonus_active:
                 attacker.parry_damage_bonus_active = False
             self._capture_snapshot(f"Miss: {attacker.character.name}", attacker, defender)
-            return miss_res
+            return self._finish_attack(attacker, defender, weapon, miss_res, defender_hp_before)
 
         # --- Hit! ---
         self.log(f"Attack hits!")
@@ -516,7 +613,13 @@ class AvaCombatEngine:
 
         attacker.last_hit_success = True
         self._capture_snapshot(f"Hit: {attacker.character.name}", attacker, defender)
-        return {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element}
+        return self._finish_attack(
+            attacker,
+            defender,
+            weapon,
+            {"hit": True, "damage": actual_damage, "is_crit": False, "is_graze": False, "blocked": False, "element": attack_element},
+            defender_hp_before,
+        )
 
     def maybe_riposte(self, defender: CombatParticipant, attacker: CombatParticipant):
         if not defender.has_feat("Riposte"):
@@ -835,13 +938,19 @@ class AvaCombatEngine:
         return False
 
     def _ensure_can_act(self, actor: CombatParticipant) -> bool:
+        if actor.is_dead:
+            self.log(f"{actor.character.name} is dead and cannot act.")
+            return False
+        if actor.in_bleedout:
+            self.log(f"{actor.character.name} is bleeding out and cannot act.")
+            return False
         if actor.current_hp > 0 or not actor.is_critical:
             return True
         if actor.has_feat("Death's Dance") and not actor.free_action_while_critical_used:
             actor.free_action_while_critical_used = True
             return True
         actor.resolve_death_save()
-        if actor.is_dead:
+        if actor.is_dead or actor.in_bleedout:
             self.log(f"{actor.character.name} succumbs while attempting to act.")
             return False
         return True
@@ -880,6 +989,9 @@ class AvaCombatEngine:
             return False
         if actor.free_move_used:
             self.log(f"{actor.character.name} has already used free movement this turn.")
+            return False
+        if actor.has_status(StatusEffect.GRAPPLED):
+            self.log(f"{actor.character.name} cannot move while Grappled.")
             return False
         if not self.tactical_map:
             self.log("No tactical map available for movement.")
@@ -922,11 +1034,22 @@ class AvaCombatEngine:
             self.tactical_map.set_occupant(dest_x, dest_y, actor)
         actor.free_move_used = True
         self.log(f"{actor.character.name} uses free movement from ({start_x}, {start_y}) to ({dest_x}, {dest_y}) (cost: {total_cost}).")
+        if self.recorder is not None:
+            self.recorder.record_movement(
+                self.round,
+                actor.character.name,
+                (start_x, start_y),
+                (dest_x, dest_y),
+                "move",
+            )
         self._capture_snapshot(f"Move: {actor.character.name}", actor, None)
         return True
 
     def action_dash(self, actor: CombatParticipant, dest_x: int, dest_y: int) -> bool:
         if not self._ensure_can_act(actor):
+            return False
+        if actor.has_status(StatusEffect.GRAPPLED):
+            self.log(f"{actor.character.name} cannot Dash while Grappled.")
             return False
         if not actor.consume_action(1, action_name="dash"):
             self.log(f"{actor.character.name} needs 1 action to Dash.")
@@ -975,6 +1098,14 @@ class AvaCombatEngine:
         actor.dashed_this_turn = True
         actor.free_move_used = True
         self.log(f"{actor.character.name} dashes from ({start_x}, {start_y}) to ({dest_x}, {dest_y}) (cost: {total_cost}).")
+        if self.recorder is not None:
+            self.recorder.record_movement(
+                self.round,
+                actor.character.name,
+                (start_x, start_y),
+                (dest_x, dest_y),
+                "dash",
+            )
         self._capture_snapshot(f"Dash: {actor.character.name}", actor, None)
         return True
 
@@ -1065,18 +1196,6 @@ class AvaCombatEngine:
             self.log(f"Momentum adds +2 damage.")
         attacker.take_damage(1, armor_piercing=True)
         self.log(f"{attacker.character.name} suffers 1 AP damage from exertion.")
-        return {"used": True, "result": res}
-
-    def action_feint(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
-        if not attacker.has_feat("Feint"):
-            return {"used": False}
-        if not self._ensure_can_act(attacker):
-            return {"used": False}
-        if not attacker.consume_action(1, is_limited=True, action_name="feint"):
-            self.log(f"{attacker.character.name} lacks actions for Feint.")
-            return {"used": False}
-        weapon = AVALORE_WEAPONS["Unarmed"]
-        res = self.perform_attack(attacker, defender, weapon=weapon, ignore_quickfooted=True, ignore_shieldmaster=True)
         return {"used": True, "result": res}
 
     def action_rousing_inspiration(self, actor: CombatParticipant) -> Dict[str, Any]:
@@ -1194,51 +1313,394 @@ class AvaCombatEngine:
         self.log(f"{attacker.character.name} exposes themselves: melee attacks gain +1 aim against them until next turn.")
         return {"used": True, "result": result}
 
+    # ------------------------------------------------------------------
+    # Maneuvers (Avalore extended mechanics)
+    # ------------------------------------------------------------------
+    def _maneuver_attack_roll(self, attacker: CombatParticipant, defender: CombatParticipant,
+                              *, allow_defense: bool = True, extra_aim: int = 0) -> Dict[str, Any]:
+        """Roll a maneuver initiation attack (STR:Athletics based).
+
+        Returns ``{'hit', 'crit', 'total'}``. A critical (10,10) auto-succeeds
+        and cannot be Blocked or Evaded. Otherwise a 12+ initiates, but the
+        target may Evade or Block to negate it -- unless ``allow_defense`` is
+        False (e.g. a Forward Charge 'unstoppable' maneuver)."""
+        roll, dice = roll_2d10()
+        is_crit = (dice[0] == 10 and dice[1] == 10)
+        mod = attacker.character.get_modifier("Strength", "Athletics")
+        mod += attacker.physical_penalty() + extra_aim
+        total = roll + mod
+        self.log(f"Maneuver roll {dice} -> {total}")
+        if is_crit:
+            self.log("Critical maneuver! Auto-succeeds; no Block/Evade.")
+            return {"hit": True, "crit": True, "total": total}
+        if total < 12:
+            return {"hit": False, "crit": False, "total": total}
+        if allow_defense and self._maneuver_defended(defender, total):
+            return {"hit": False, "crit": False, "total": total}
+        return {"hit": True, "crit": False, "total": total}
+
+    def _maneuver_defended(self, defender: CombatParticipant, attack_total: int) -> bool:
+        """Target attempts to Evade or Block an incoming maneuver. True = negated."""
+        if defender.is_evading:
+            roll, _ = roll_2d10()
+            total = roll + defender.get_evasion_modifier()
+            if total >= attack_total:
+                self.log(f"{defender.character.name} evades the maneuver ({total} >= {attack_total}).")
+                return True
+        if defender.is_blocking and defender.shield:
+            _, block_success = defender.shield.roll_block(
+                extra_bonus=-getattr(defender, "mockery_penalty_total", 0))
+            if block_success:
+                self.log(f"{defender.character.name} blocks the maneuver.")
+                return True
+        return False
+
+    def _skill_contest(self, attacker: CombatParticipant, defender: CombatParticipant,
+                       *, attacker_options=None, defender_options=None) -> bool:
+        """Contested 2d10 + best-of-options check. True if the attacker meets or
+        beats the defender. Each side rolls once, adding the best of its
+        ``(stat, skill)`` options plus any condition penalty (e.g. Grappled)."""
+        phys = [("Strength", "Athletics"), ("Dexterity", "Finesse")]
+        attacker_options = attacker_options or phys
+        defender_options = defender_options or phys
+        a_mod = max(attacker.character.get_modifier(s, k) for s, k in attacker_options)
+        d_mod = max(defender.character.get_modifier(s, k) for s, k in defender_options)
+        a_roll, _ = roll_2d10()
+        d_roll, _ = roll_2d10()
+        a_total = a_roll + a_mod + attacker.physical_penalty()
+        d_total = d_roll + d_mod + defender.physical_penalty()
+        self.log(f"Contest: {attacker.character.name} {a_total} vs {defender.character.name} {d_total}")
+        return a_total >= d_total
+
+    def _set_prone(self, target: CombatParticipant) -> None:
+        target.apply_status(StatusEffect.PRONE)
+        target.status_durations[StatusEffect.PRONE] = 1
+        self._end_all_grapples(target)  # a combatant knocked Prone releases/escapes grapples
+
+    def _begin_grapple(self, grappler: CombatParticipant, target: CombatParticipant) -> None:
+        grappler.grappling_ids.add(id(target))
+        target.grappled_by_ids.add(id(grappler))
+        target.apply_status(StatusEffect.GRAPPLED)
+
+    def _end_grapple(self, grappler: CombatParticipant, target: CombatParticipant) -> None:
+        grappler.grappling_ids.discard(id(target))
+        target.grappled_by_ids.discard(id(grappler))
+        if not target.grappled_by_ids:
+            target.clear_status(StatusEffect.GRAPPLED)
+
+    def _end_all_grapples(self, p: CombatParticipant) -> None:
+        for other in list(self.participants):
+            if other is p:
+                continue
+            self._end_grapple(p, other)
+            self._end_grapple(other, p)
+
     def action_shove(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
+        """Limited maneuver: Unarmed attack that deals damage and shoves the
+        target STR:Athletics (min 2) blocks. A critical also knocks them Prone."""
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.consume_action(1, action_name="shove"):
-            self.log(f"{attacker.character.name} lacks actions to Shove.")
+        if not attacker.consume_action(1, is_limited=True, action_name="shove"):
+            self.log(f"{attacker.character.name} lacks actions or the limited slot to Shove.")
             return {"used": False}
-        roll, dice = roll_2d10()
-        atk_mod = attacker.character.get_modifier("Strength", "Athletics")
-        total = roll + atk_mod
         unstoppable = attacker.forward_charge_ready
-        success = total >= 12
-        self.log(f"Shove roll {dice} -> {total} (unstoppable={unstoppable})")
-        if success:
-            if unstoppable:
-                self._apply_knockback_force(defender, 1, attacker.position, attacker.character.name)
-                self._move_toward(attacker, defender.position, 3)
-                attacker.forward_charge_ready = False
-            else:
-                self.apply_knockback(defender, 1, source_pos=attacker.position, source_name=attacker.character.name)
-            return {"used": True, "success": True}
-        else:
+        res = self._maneuver_attack_roll(attacker, defender, allow_defense=not unstoppable)
+        if not res["hit"]:
+            self.log(f"{attacker.character.name}'s Shove fails.")
             return {"used": True, "success": False}
+        unarmed_damage = AVALORE_WEAPONS["Unarmed"].damage
+        dealt = defender.take_damage(unarmed_damage, armor_piercing=False)
+        distance = max(2, attacker.character.get_modifier("Strength", "Athletics"))
+        if unstoppable:
+            self._apply_knockback_force(defender, distance, attacker.position, attacker.character.name)
+            self._move_toward(attacker, defender.position, 3)
+            attacker.forward_charge_ready = False
+        else:
+            self.apply_knockback(defender, distance, source_pos=attacker.position, source_name=attacker.character.name)
+        if res["crit"]:
+            self._set_prone(defender)
+            self.log(f"{defender.character.name} is knocked Prone by the critical Shove.")
+        return {"used": True, "success": True, "damage": dealt}
 
     def action_topple(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
+        """Limited maneuver: Unarmed/Staff/Polearm tackle. On a hit, an
+        Athletics-or-Finesse contest knocks the loser Prone. Deals no damage."""
         if not self._ensure_can_act(attacker):
             return {"used": False}
-        if not attacker.consume_action(1, action_name="topple"):
-            self.log(f"{attacker.character.name} lacks actions to Topple.")
+        if not attacker.consume_action(1, is_limited=True, action_name="topple"):
+            self.log(f"{attacker.character.name} lacks actions or the limited slot to Topple.")
             return {"used": False}
-        roll, dice = roll_2d10()
-        atk_mod = attacker.character.get_modifier("Strength", "Athletics")
-        total = roll + atk_mod
         unstoppable = attacker.forward_charge_ready
-        success = total >= 12
-        self.log(f"Topple roll {dice} -> {total} (unstoppable={unstoppable})")
-        if success:
-            defender.apply_status(StatusEffect.PRONE)
-            defender.status_durations[StatusEffect.PRONE] = 1
-            self.log(f"{defender.character.name} is knocked prone.")
+        res = self._maneuver_attack_roll(attacker, defender, allow_defense=not unstoppable)
+        if not res["hit"]:
+            self.log(f"{attacker.character.name}'s Topple fails.")
+            return {"used": True, "success": False}
+        if res["crit"] or self._skill_contest(attacker, defender):
+            self._set_prone(defender)
+            self.log(f"{defender.character.name} is knocked Prone.")
             if unstoppable:
                 self._move_toward(attacker, defender.position, 3)
                 attacker.forward_charge_ready = False
             return {"used": True, "success": True}
-        else:
+        self.log(f"{defender.character.name} resists the Topple.")
+        return {"used": True, "success": False}
+
+    def action_grapple(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
+        """Maneuver (1 action): Unarmed/Whip attack; on a hit an
+        Athletics-or-Finesse contest Grapples the loser. Deals no damage."""
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(1, action_name="grapple"):
+            self.log(f"{attacker.character.name} lacks actions to Grapple.")
+            return {"used": False}
+        res = self._maneuver_attack_roll(attacker, defender)
+        if not res["hit"]:
+            self.log(f"{attacker.character.name}'s Grapple fails to connect.")
             return {"used": True, "success": False}
+        if res["crit"] or self._skill_contest(attacker, defender):
+            self._begin_grapple(attacker, defender)
+            self.log(f"{attacker.character.name} grapples {defender.character.name}.")
+            return {"used": True, "success": True}
+        self.log(f"{defender.character.name} breaks the grapple attempt.")
+        return {"used": True, "success": False}
+
+    def action_disarm(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
+        """Maneuver (1 action) usable while Grappling: contested check forces the
+        target to drop a weapon and immediately ends the grapple."""
+        if id(defender) not in attacker.grappling_ids:
+            self.log(f"{attacker.character.name} must be Grappling a target to Disarm it.")
+            return {"used": False}
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(1, action_name="disarm"):
+            return {"used": False}
+        if self._skill_contest(attacker, defender):
+            dropped = defender.weapon_main
+            defender.weapon_main = None
+            defender.apply_status(StatusEffect.DISARMED)
+            self._end_grapple(attacker, defender)
+            name = dropped.name if dropped else "an item"
+            self.log(f"{attacker.character.name} disarms {defender.character.name} of {name}; the grapple ends.")
+            return {"used": True, "success": True}
+        self.log(f"{defender.character.name} keeps hold of their weapon.")
+        return {"used": True, "success": False}
+
+    def action_struggle(self, actor: CombatParticipant,
+                        grappler: Optional[CombatParticipant] = None) -> Dict[str, Any]:
+        """Maneuver (1 action) to break free of a grapple. Athletics-or-Finesse
+        vs each grappler's Athletics; meet/beat to escape. Exempt from Death Saves."""
+        if not actor.has_status(StatusEffect.GRAPPLED):
+            self.log(f"{actor.character.name} is not Grappled.")
+            return {"used": False}
+        if not self._ensure_can_act(actor):
+            return {"used": False}
+        if not actor.consume_action(1, action_name="struggle"):
+            return {"used": False}
+        grapplers = [grappler] if grappler is not None else [
+            p for p in self.participants if id(p) in actor.grappled_by_ids]
+        broke_free = False
+        for g in list(grapplers):
+            if self._skill_contest(actor, g, defender_options=[("Strength", "Athletics")]):
+                self._end_grapple(g, actor)
+                broke_free = True
+        self.log(f"{actor.character.name} {'breaks free of the grapple' if broke_free else 'fails to break free'}.")
+        return {"used": True, "success": broke_free}
+
+    def action_pull(self, attacker: CombatParticipant, defender: CombatParticipant,
+                   weapon: Optional[Weapon] = None) -> Dict[str, Any]:
+        """Limited maneuver (Whip/Meteor Hammer): a damaging strike that, on a
+        contested STR:Athletics win, pulls the target to the block in front of you."""
+        weapon = weapon or attacker.weapon_main
+        if weapon is None or weapon.name not in {"Whip", "Meteor Hammer"}:
+            self.log("Pull requires a Whip or Meteor Hammer.")
+            return {"used": False}
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(weapon.actions_required, is_limited=True, action_name="pull"):
+            self.log(f"{attacker.character.name} lacks actions or the limited slot to Pull.")
+            return {"used": False}
+        result = self.perform_attack(attacker, defender, weapon=weapon, consume_actions=False)
+        if not result.get("hit"):
+            return {"used": True, "success": False, "result": result}
+        if self._skill_contest(attacker, defender, defender_options=[("Strength", "Athletics")]):
+            self._pull_adjacent(attacker, defender)
+            self.log(f"{attacker.character.name} pulls {defender.character.name} adjacent.")
+            return {"used": True, "success": True, "result": result}
+        return {"used": True, "success": False, "result": result}
+
+    def _pull_adjacent(self, attacker: CombatParticipant, defender: CombatParticipant) -> None:
+        if not self.tactical_map:
+            return
+        ax, ay = attacker.position
+        dx, dy = defender.position
+        dist = self.tactical_map.manhattan_distance(ax, ay, dx, dy)
+        if dist > 1:
+            self._move_toward(defender, attacker.position, dist - 1)
+
+    # ------------------------------------------------------------------
+    # Stealth (Avalore extended mechanics)
+    # ------------------------------------------------------------------
+    def _sneak_detected(self, attacker: CombatParticipant, defender: CombatParticipant) -> bool:
+        """Target's free Perception check to notice a Hidden attacker. On success
+        the Sneak Attack is downgraded to a normal attack."""
+        roll, _ = roll_2d10()
+        perception = roll + defender.character.get_modifier("Intelligence", "Perception")
+        stealth_dc = 12 + attacker.get_stealth_modifier()
+        return perception >= stealth_dc
+
+    def action_hide(self, actor: CombatParticipant) -> Dict[str, Any]:
+        """DEX:Stealth check (1 action) to become Hidden. While Hidden the actor
+        cannot be targeted (except by AoE) and their next attack is a Sneak Attack."""
+        if not self._ensure_can_act(actor):
+            return {"used": False}
+        if not actor.consume_action(1, action_name="hide"):
+            self.log(f"{actor.character.name} has no actions left to Hide.")
+            return {"used": False}
+        roll, _ = roll_2d10()
+        total = roll + actor.get_stealth_modifier()
+        if total >= 12:
+            actor.apply_status(StatusEffect.HIDDEN)
+            self.log(f"{actor.character.name} hides (Stealth {total}); now Hidden.")
+            return {"used": True, "success": True}
+        self.log(f"{actor.character.name} fails to Hide ({total} < 12).")
+        return {"used": True, "success": False}
+
+    def action_conceal(self, actor: CombatParticipant) -> Dict[str, Any]:
+        """DEX:Stealth check (1 action) to perform the next action in secret."""
+        if not self._ensure_can_act(actor):
+            return {"used": False}
+        if not actor.consume_action(1, action_name="conceal"):
+            self.log(f"{actor.character.name} has no actions left to Conceal.")
+            return {"used": False}
+        # The -3 "in plain view" penalty is situational (DM-adjudicated) and not
+        # modelled here; Backline Flanker's waiver is consumed if present.
+        actor.ignore_next_conceal_penalty = False
+        roll, _ = roll_2d10()
+        total = roll + actor.get_stealth_modifier()
+        if total >= 12:
+            actor.concealed_next_action = True
+            self.log(f"{actor.character.name} conceals their next action (Stealth {total}).")
+            return {"used": True, "success": True}
+        self.log(f"{actor.character.name} fails to Conceal ({total} < 12).")
+        return {"used": True, "success": False}
+
+    def _unyielding_interceptor(self, defender: CombatParticipant):
+        """Who may intercept a ranged attack on `defender` via Unyielding Reflex:
+        the target itself or an ally within Melee distance, once per round each."""
+        candidates = [defender]
+        if self.tactical_map:
+            for p in self.participants:
+                if p is defender or p.current_hp <= 0 or p.is_dead:
+                    continue
+                if p.team == defender.team and self.get_distance(p, defender) <= 1:
+                    candidates.append(p)
+        for c in candidates:
+            if c.has_feat("Unyielding Reflex") and not c.unyielding_reflex_used_round:
+                return c
+        return None
+
+    def action_rage(self, actor: CombatParticipant) -> Dict[str, Any]:
+        """Mutant Rage (1 action): enter a rage for the scene. Knocks adjacent
+        enemies Prone and grants +1 damage on every hit (via RageHandler)."""
+        if not actor.has_feat("Rage") or actor.rage_active:
+            return {"used": False}
+        if not self._ensure_can_act(actor):
+            return {"used": False}
+        if not actor.consume_action(1, action_name="rage"):
+            return {"used": False}
+        actor.rage_active = True
+        self.log(f"{actor.character.name} enters a Rage! +1 damage on hits.")
+        if self.tactical_map:
+            for p in list(self.participants):
+                if p is actor or p.current_hp <= 0 or p.team == actor.team:
+                    continue
+                if self.get_distance(actor, p) <= 1:
+                    self._set_prone(p)
+                    self.log(f"{p.character.name} is knocked Prone by the Rage.")
+        return {"used": True}
+
+    def action_lw_skewer(self, attacker: CombatParticipant, target_x: int, target_y: int) -> Dict[str, Any]:
+        """Limited Lineage-Weapon ability: strike every enemy along a 2-wide,
+        6-long line in the chosen direction. (The -1-damage-per-extra-target
+        falloff is a documented simplification.)"""
+        if not attacker.has_feat("LW: Skewer") or not self.tactical_map:
+            return {"used": False}
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(1, is_limited=True, action_name="lw skewer"):
+            self.log(f"{attacker.character.name} lacks actions or the limited slot for LW: Skewer.")
+            return {"used": False}
+        weapon = attacker.weapon_main or AVALORE_WEAPONS["Unarmed"]
+        ax, ay = attacker.position
+        dx = (target_x > ax) - (target_x < ax)
+        dy = (target_y > ay) - (target_y < ay)
+        if dx == 0 and dy == 0:
+            dx = 1
+        px, py = -dy, dx  # perpendicular, for the 2-block width
+        seen_ids: Set[int] = set()
+        targets: List[CombatParticipant] = []
+        for step in range(1, 7):
+            for ox, oy in ((0, 0), (px, py)):
+                cx, cy = ax + dx * step + ox, ay + dy * step + oy
+                tile = self.tactical_map.get_tile(cx, cy)
+                if tile and isinstance(tile.occupant, CombatParticipant):
+                    t = tile.occupant
+                    if t is attacker or id(t) in seen_ids or t.team == attacker.team:
+                        continue
+                    seen_ids.add(id(t))
+                    targets.append(t)
+        results = [(t, self.perform_attack(attacker, t, weapon=weapon, consume_actions=False)) for t in targets]
+        return {"used": True, "results": results, "targets": len(targets)}
+
+    def action_pounce(self, attacker: CombatParticipant, dest_x: int, dest_y: int,
+                     target: Optional[CombatParticipant] = None) -> Dict[str, Any]:
+        """Limited Mutant ability (both actions): leap to a point in Skirmishing
+        distance; if it lands in Melee of a target, make a free Unarmed attack."""
+        if not attacker.has_feat("Pounce"):
+            return {"used": False}
+        if not self._ensure_can_act(attacker):
+            return {"used": False}
+        if not attacker.consume_action(2, is_limited=True, action_name="pounce"):
+            self.log(f"{attacker.character.name} needs both actions (and the limited slot) to Pounce.")
+            return {"used": False}
+        if self.tactical_map:
+            sx, sy = attacker.position
+            self.tactical_map.clear_occupant(sx, sy)
+            attacker.position = (dest_x, dest_y)
+            self.tactical_map.set_occupant(dest_x, dest_y, attacker)
+        result = None
+        if target is not None and (not self.tactical_map or self.get_distance(attacker, target) <= 1):
+            result = self.perform_attack(attacker, target, weapon=AVALORE_WEAPONS["Unarmed"], consume_actions=False)
+        return {"used": True, "result": result}
+
+    def action_stabilize(self, healer: CombatParticipant, target: CombatParticipant) -> Dict[str, Any]:
+        """Spend 2 actions and an INT:Healing check to stabilize a Bleedout ally
+        within Melee range, halting their death countdown."""
+        if not target.in_bleedout:
+            self.log(f"{target.character.name} is not bleeding out.")
+            return {"used": False}
+        if target.stabilized:
+            self.log(f"{target.character.name} is already stabilized.")
+            return {"used": False}
+        if not self._ensure_can_act(healer):
+            return {"used": False}
+        if self.tactical_map:
+            hx, hy = healer.position
+            tx, ty = target.position
+            if self.tactical_map.manhattan_distance(hx, hy, tx, ty) > 1:
+                self.log(f"{healer.character.name} must be in Melee range to stabilize {target.character.name}.")
+                return {"used": False}
+        if not healer.consume_action(2, action_name="stabilize"):
+            self.log(f"{healer.character.name} needs 2 actions to stabilize.")
+            return {"used": False}
+        roll, _ = roll_2d10()
+        total = roll + healer.character.get_modifier("Intelligence", "Healing")
+        if total >= 12:
+            target.stabilized = True
+            self.log(f"{healer.character.name} stabilizes {target.character.name} (Healing {total}).")
+            return {"used": True, "success": True}
+        self.log(f"{healer.character.name} fails to stabilize {target.character.name} ({total} < 12).")
+        return {"used": True, "success": False}
 
     def _reactive_maneuver(self, defender: CombatParticipant, attacker: CombatParticipant) -> None:
         if defender.reactive_maneuver_used:
@@ -1452,11 +1914,20 @@ class AvaCombatEngine:
         if not actor.consume_action(1, action_name="second wind"):
             self.log(f"{actor.character.name} has no actions left for Second Wind.")
             return False
+        hp_before = actor.current_hp
         gained = max(0, actor.character.get_modifier("Strength", "Fortitude") + 2)
         actor.current_hp = min(actor.max_hp, actor.current_hp + gained)
         actor.is_critical = actor.current_hp == 0
         actor.feat_uses_this_fight["Second Wind"] = 1
         self.log(f"{actor.character.name} uses Second Wind and gains {gained} HP (now {actor.current_hp}/{actor.max_hp}).")
+        if self.recorder is not None:
+            self.recorder.record_healing(
+                self.round,
+                actor.character.name,
+                actor.character.name,
+                actor.current_hp - hp_before,
+                "Second Wind",
+            )
         return True
 
     def action_dual_striker(self, attacker: CombatParticipant, defender: CombatParticipant) -> Dict[str, Any]:
@@ -1500,30 +1971,6 @@ class AvaCombatEngine:
         res2 = self.perform_attack(attacker, defender, weapon=weapon, accuracy_modifier=-1)
         combined_damage = res1.get("damage", 0) + res2.get("damage", 0)
         return {"used": True, "damage": combined_damage, "results": (res1, res2)}
-
-    def action_armor_piercer(self, attacker: CombatParticipant, defender: CombatParticipant, weapon: Weapon) -> Dict[str, Any]:
-        if not attacker.has_feat("Armor Piercer"):
-            return {"used": False}
-        if weapon.name not in {"Arming Sword", "Dagger"}:
-            return {"used": False}
-        if not self._ensure_can_act(attacker):
-            return {"used": False}
-        if not attacker.consume_action(1, is_limited=True, action_name="armor piercer"):
-            self.log(f"{attacker.character.name} lacks actions for Armor Piercer.")
-            return {"used": False}
-        ap = True
-        if defender.shield and defender.shield.grants_ap_immunity and defender.is_blocking:
-            ap = False
-            damage_bonus = 1
-        else:
-            damage_bonus = 0
-        result = self.perform_attack(attacker, defender, weapon=weapon, accuracy_modifier=0)
-        if result.get("hit"):
-            dmg = weapon.damage + damage_bonus
-            actual = defender.take_damage(dmg, armor_piercing=ap)
-            result["damage"] = actual
-            self.log(f"Armor Piercer strike deals {actual} damage (AP={ap}).")
-        return {"used": True, "result": result}
 
     def action_bastion_stance(self, actor: CombatParticipant) -> bool:
         if not actor.has_feat("Bastion Stance"):
@@ -1811,9 +2258,8 @@ class AvaCombatEngine:
                 dy = 1 if dy > 0 else -1
                 dx = 0
         else:
-            import random
             directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-            dx, dy = random.choice(directions)
+            dx, dy = self.rng.choice(directions)
         final_x, final_y = start_x, start_y
         blocked = False
         for i in range(1, blocks + 1):
@@ -1829,6 +2275,14 @@ class AvaCombatEngine:
             self.tactical_map.set_occupant(final_x, final_y, target)
             distance_moved = abs(final_x - start_x) + abs(final_y - start_y)
             self.log(f"{target.character.name} is knocked back {distance_moved} blocks to ({final_x}, {final_y}){' by ' + source_name if source_name else ''}!")
+            if self.recorder is not None:
+                self.recorder.record_movement(
+                    self.round,
+                    target.character.name,
+                    (start_x, start_y),
+                    (final_x, final_y),
+                    "knockback",
+                )
             return True, blocked
         else:
             self.log(f"{target.character.name} knockback blocked by terrain!")

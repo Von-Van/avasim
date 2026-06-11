@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import copy
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -27,6 +28,7 @@ from .engine import AvaCombatEngine
 from .map import TacticalMap
 from .participant import CombatParticipant
 from .ai import CombatAI
+from .dice import rng_scope
 
 
 @dataclass
@@ -60,6 +62,8 @@ class BatchConfig:
     strategy: str = "balanced"
     time_of_day: str = "day"
     surprise: str = "none"
+    base_seed: int = 0
+    capture_policy: str = "summary"
 
 
 @dataclass
@@ -151,6 +155,7 @@ class BatchRunner:
             record = BatchRunner._run_single(
                 participants, tmap, config.turn_limit,
                 config.strategy, config.time_of_day, config.surprise,
+                config.base_seed + i, config.capture_policy,
             )
             result.records.append(record)
             if progress_callback:
@@ -167,9 +172,16 @@ class BatchRunner:
         strategy: str,
         time_of_day: str,
         surprise: str,
+        seed: int = 0,
+        capture_policy: str = "summary",
     ) -> CombatRecord:
-        engine = AvaCombatEngine(participants, tactical_map=tmap)
-        engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
+        rng = random.Random(seed)
+        engine = AvaCombatEngine(
+            participants,
+            tactical_map=tmap,
+            capture_policy=capture_policy,
+            rng=rng,
+        )
         engine.set_time_of_day(time_of_day)
         if surprise == "surprised":
             engine.party_surprised = True
@@ -184,17 +196,18 @@ class BatchRunner:
 
         ai = CombatAI(strategy=strategy, show_decisions=False)
 
-        engine.roll_initiative()
-        turns = 0
-        while not engine.is_combat_ended() and turns < turn_limit:
-            current = engine.get_current_participant()
-            if current is None or current.current_hp <= 0:
+        with rng_scope(rng):
+            engine.roll_initiative()
+            turns = 0
+            while not engine.is_combat_ended() and turns < turn_limit:
+                current = engine.get_current_participant()
+                if current is None or current.current_hp <= 0:
+                    engine.advance_turn()
+                    turns += 1
+                    continue
+                ai.decide_turn(engine, current)
                 engine.advance_turn()
                 turns += 1
-                continue
-            ai.decide_turn(engine, current)
-            engine.advance_turn()
-            turns += 1
 
         # Calculate results
         record = CombatRecord()

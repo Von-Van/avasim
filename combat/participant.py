@@ -40,6 +40,7 @@ class CombatParticipant:
     dashed_this_turn: bool = False
     free_move_used: bool = False
     ignore_next_conceal_penalty: bool = False
+    concealed_next_action: bool = False
     inspired_scene: bool = False
     graze_buffer_used: bool = False
     suppress_death_save_once: bool = False
@@ -78,11 +79,39 @@ class CombatParticipant:
     limited_action_used: bool = False
     death_save_failures: int = 0
     is_dead: bool = False
+    # Grapple relationships are tracked by id() because CombatParticipant is an
+    # unhashable dataclass (see control_wall_bonus_targets for the same pattern).
+    grappling_ids: Set[int] = field(default_factory=set)   # ids this one grapples
+    grappled_by_ids: Set[int] = field(default_factory=set)  # ids grappling this one
+    # Bleedout (failed Death Save) state.
+    in_bleedout: bool = False
+    bleedout_turns_remaining: int = 0
+    stabilized: bool = False
+    # Feat state for newly-wired combat feats.
+    martial_discipline_stacks: int = 0       # active +aim to Arming Sword this turn
+    martial_discipline_next: int = 0         # stacks earned from blocks this turn
+    rage_active: bool = False
+    unyielding_reflex_used_round: bool = False
+    wounded_animal_used_scene: bool = False
+    has_taken_turn: bool = False
     position: Tuple[int, int] = (0, 0)
     weapons_equipped: List[str] = field(default_factory=list)
     loaded_weapon: Optional[str] = None
     drawn_weapon: Optional[str] = None
     lifted_weapon: Optional[str] = None
+
+    # Actions that do NOT trigger a Death Save while Critical (Avalore rules).
+    # Bardic = inspiration abilities; Perception = Spot/Precise Senses; Preparatory
+    # (Lift/Load/Draw) is matched by prefix below.
+    DEATH_SAVE_EXEMPT_ACTIONS = {
+        "dash", "evade", "block", "struggle", "hide", "conceal", "stabilize",
+        "rousing inspiration", "commanding inspiration", "precise senses", "spot",
+    }
+    DEATH_SAVE_EXEMPT_PREFIXES = ("draw ", "load ", "lift")
+
+    def _death_save_exempt(self, action_name: str) -> bool:
+        return (action_name in self.DEATH_SAVE_EXEMPT_ACTIONS
+                or action_name.startswith(self.DEATH_SAVE_EXEMPT_PREFIXES))
 
     def validate_action_cost(self, cost: int, is_limited: bool = False) -> bool:
         """Check if character can afford the action cost."""
@@ -99,8 +128,8 @@ class CombatParticipant:
         self.actions_remaining -= cost
         if is_limited:
             self.limited_action_used = True
-        if self.is_critical and action_name not in {"dash", "evade", "block"}:
-            # Critical state: most actions trigger death save
+        if self.is_critical and not self._death_save_exempt(action_name):
+            # Critical state: most actions trigger a death save
             # Dispatch to feat handlers to check for suppression
             from .feat_handlers import FEAT_REGISTRY
             suppressed = FEAT_REGISTRY.dispatch_on_critical_action(
@@ -109,13 +138,25 @@ class CombatParticipant:
                 self.last_death_save_triggered = True
         return True
 
+    def physical_penalty(self) -> int:
+        """Penalty applied to physical rolls (Attack, Evade, Block, Cast) from
+        conditions. Per the Avalore rules, both a grappler and a grappled target
+        take -3 to physical rolls while the grapple is maintained."""
+        pen = 0
+        if self.has_status(StatusEffect.GRAPPLED) or self.grappling_ids:
+            pen -= 3
+        return pen
+
     def get_evasion_modifier(self) -> int:
-        base = self.character.get_modifier("Dexterity", "Acrobatics")
+        # The DEX:Acrobatics contribution to an Evade roll is capped at +3 per the
+        # rules ("/roll evade ... capped at +3"). Feat bonuses (e.g. Quickfooted)
+        # are added separately in the attack resolver and may exceed this cap.
+        base = min(3, self.character.get_modifier("Dexterity", "Acrobatics"))
         if self.armor:
             base += self.armor.evasion_penalty
         if self.has_status(StatusEffect.SLOWED):
             base -= 2
-        return base - self.mockery_penalty_total
+        return base + self.physical_penalty() - self.mockery_penalty_total
 
     def get_quickfooted_bonus(self, incoming_weapon: Weapon, incoming_shield: Optional[Shield]) -> int:
         from .items import Shield
@@ -172,9 +213,29 @@ class CombatParticipant:
 
     def start_turn(self):
         from .feat_handlers import FEAT_REGISTRY
+        # Bleedout: dying combatants count down toward death and take no actions.
+        if self.in_bleedout:
+            self.actions_remaining = 0
+            self.limited_action_used = False
+            self.has_taken_turn = True
+            # Turn-start hooks first (e.g. Wounded Animal self-stabilizes) so a
+            # mutant can halt their own countdown before it is decremented.
+            engine = getattr(self, 'engine', None)
+            if engine:
+                FEAT_REGISTRY.dispatch_on_turn_start(engine, self)
+            if not self.stabilized:
+                self.bleedout_turns_remaining -= 1
+                if self.bleedout_turns_remaining <= 0:
+                    self.is_dead = True
+            return
         # Default actions
         self.actions_remaining = self.actions_per_turn
         self.limited_action_used = False
+        self.has_taken_turn = True
+        self.unyielding_reflex_used_round = False
+        # Martial Discipline: stacks earned from blocking last turn apply this turn.
+        self.martial_discipline_stacks = self.martial_discipline_next
+        self.martial_discipline_next = 0
         self.is_evading = False
         self.is_blocking = False
         self.lifted_weapon = None  # Reset lift state each turn
@@ -185,6 +246,7 @@ class CombatParticipant:
         self.flowing_stance = False
         self.dashed_this_turn = False
         self.free_move_used = False
+        self.concealed_next_action = False
         self.graze_buffer_used = False
         self.free_action_while_critical_used = False
         self.whirling_devil_active = False
@@ -264,15 +326,29 @@ class CombatParticipant:
         return status in self.status_effects
 
     def can_use_limited(self, feat: str, per_scene: bool = False, limit: int = 1) -> bool:
-        if not per_scene:
-            if feat in self.limited_used_turn:
-                return False
-            self.limited_used_turn.add(feat)
-            return True
-        count = self.limited_used_scene_counts.get(feat, 0)
-        if count >= limit:
+        """Reserve this turn's single Limited slot.
+
+        Per the Avalore rules a character may use only ONE Limited ability per
+        turn, whether it is a feat ability or a maneuver (Shove/Topple/Pull/...).
+        That shared per-turn budget is the ``limited_action_used`` flag, which is
+        also set by :meth:`consume_action` (``is_limited=True``) and
+        :meth:`take_limited_action`. Per-scene caps (e.g. "3x per scene") are an
+        independent axis tracked via ``limited_used_scene_counts``.
+        """
+        # Shared per-turn budget: only one Limited action/ability per turn.
+        if self.limited_action_used:
             return False
-        self.limited_used_scene_counts[feat] = count + 1
+        if per_scene:
+            # Per-scene cap is checked here; the matching
+            # consume_action(is_limited=True) call claims the per-turn slot.
+            count = self.limited_used_scene_counts.get(feat, 0)
+            if count >= limit:
+                return False
+            self.limited_used_scene_counts[feat] = count + 1
+            return True
+        # Per-turn-only limited ability: claim the shared slot now.
+        self.limited_used_turn.add(feat)
+        self.limited_action_used = True
         return True
 
     def take_limited_action(self) -> bool:
@@ -351,31 +427,67 @@ class CombatParticipant:
             amount -= absorbed
         # Apply to real HP
         self.current_hp = max(0, self.current_hp - amount)
+        # A character already in Bleedout that takes further damage dies.
+        if self.in_bleedout:
+            if amount > 0:
+                self.is_dead = True
+                self.in_bleedout = False
+                self.clear_status(StatusEffect.BLEEDOUT)
+            return amount
         # Check for critical/death
         if self.current_hp == 0:
             if self.is_critical:
-                # Already critical: damage triggers death save
+                # Already critical: damage triggers a death save
                 if allow_death_save and not self.suppress_death_save_once:
                     self.last_death_save_triggered = True
                     self.resolve_death_save()
                 if self.suppress_death_save_once:
                     self.suppress_death_save_once = False
             else:
-                # First time at 0 HP: become critical
+                # First time at 0 HP: become Critical
                 self.is_critical = True
         return amount
 
     def resolve_death_save(self):
+        """Roll a Death Save (2d10 + STR:Fortitude halved, round up; DC 12).
+
+        A critical success (10,10) exits Critical with 1 HP. A failure (< 12)
+        drops the character into Bleedout rather than killing them outright."""
+        import math
         from .dice import roll_2d10
-        if self.is_dead:
+        if self.is_dead or self.in_bleedout:
             return
-        roll, _ = roll_2d10()
-        if roll < 12:
+        roll, dice = roll_2d10()
+        is_crit_success = dice[0] == 10 and dice[1] == 10
+        fort = self.character.get_modifier("Strength", "Fortitude")
+        total = roll + math.ceil(fort / 2)
+        if is_crit_success:
+            self.is_critical = False
+            self.current_hp = max(self.current_hp, 1)
+            self.death_save_failures = 0
+            return
+        if total < 12:
             self.death_save_failures += 1
-            if self.death_save_failures >= 1:
-                self.is_dead = True
+            self._enter_bleedout()
+
+    def _enter_bleedout(self):
+        """Enter Bleedout: out of the fight, dying after HAR:Belief (min 1) turns
+        unless stabilized. A bleeding-out character is treated as incapacitated."""
+        self.in_bleedout = True
+        self.is_critical = False
+        self.stabilized = False
+        self.apply_status(StatusEffect.BLEEDOUT)
+        belief = self.character.get_modifier("Harmony", "Belief")
+        self.bleedout_turns_remaining = max(1, belief)
+        self.actions_remaining = 0
 
     def heal(self, amount: int):
         self.current_hp = min(self.max_hp, self.current_hp + amount)
         if self.current_hp > 0:
+            # Healing for any amount lifts Critical and Bleedout (per the rules).
             self.is_critical = False
+            if self.in_bleedout:
+                self.in_bleedout = False
+                self.stabilized = False
+                self.bleedout_turns_remaining = 0
+                self.clear_status(StatusEffect.BLEEDOUT)

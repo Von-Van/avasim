@@ -3,6 +3,7 @@
 Test script demonstrating the tactical map and movement system.
 """
 
+import unittest
 from dataclasses import dataclass
 from typing import Dict, List
 from combat import (
@@ -97,7 +98,7 @@ def test_movement_and_pathfinding():
         character=warrior_char,
         current_hp=30,
         max_hp=30,
-        weapon_main=AVALORE_WEAPONS["Spear"],
+        weapon_main=AVALORE_WEAPONS["Polearm"],
         armor=AVALORE_ARMOR["Medium Armor"],
         shield=None,
         feats=[AVALORE_FEATS["Control"], AVALORE_FEATS["Mighty Strike"]],
@@ -190,11 +191,11 @@ def test_movement_and_pathfinding():
     print("=" * 60)
     
     distance = combat.get_distance(warrior, archer)
-    spear_in_range = combat.is_in_range(warrior, archer, AVALORE_WEAPONS["Spear"])
+    spear_in_range = combat.is_in_range(warrior, archer, AVALORE_WEAPONS["Polearm"])
     longbow_in_range = combat.is_in_range(archer, warrior, AVALORE_WEAPONS["Longbow"])
     
     print(f"\nDistance between characters: {distance} blocks")
-    print(f"Spear (SKIRMISHING) in range: {spear_in_range}")
+    print(f"Polearm (MELEE reach) in range: {spear_in_range}")
     print(f"Longbow (RANGED) in range: {longbow_in_range}")
     
     # Test knockback
@@ -228,6 +229,64 @@ def test_movement_and_pathfinding():
     print("\n" + "=" * 60)
     print("ALL TESTS COMPLETE")
     print("=" * 60)
+
+
+class TestTacticalMapAutomated(unittest.TestCase):
+    def _participant(self, name: str, position: tuple[int, int]) -> CombatParticipant:
+        character = MockCharacter(
+            name=name,
+            stats={"Strength": 3, "Dexterity": 2, "Intelligence": 0, "Harmony": 0},
+            skills={
+                "Strength": {"Athletics": 2, "Fortitude": 1, "Forging": 0},
+                "Dexterity": {"Acrobatics": 1, "Stealth": 0, "Finesse": 0},
+                "Intelligence": {"Healing": 0, "Perception": 0, "Research": 0},
+                "Harmony": {"Arcana": 0, "Nature": 0, "Belief": 0},
+            },
+            feats=[],
+        )
+        return CombatParticipant(
+            character=character,
+            current_hp=20,
+            max_hp=20,
+            weapon_main=AVALORE_WEAPONS["Arming Sword"],
+            armor=AVALORE_ARMOR["Light Armor"],
+            position=position,
+        )
+
+    def test_pathfinding_avoids_impassable_wall(self):
+        tmap = create_test_map(20, 20)
+        actor = self._participant("Walker", (2, 2))
+        path = tmap.find_path(2, 2, 8, 8, actor)
+
+        self.assertIsNotNone(path)
+        self.assertNotIn((10, 8), path)
+
+    def test_action_move_updates_grid_occupant(self):
+        tmap = create_test_map(20, 20)
+        actor = self._participant("Walker", (2, 2))
+        target = self._participant("Target", (18, 18))
+        tmap.set_occupant(2, 2, actor)
+        tmap.set_occupant(18, 18, target)
+        combat = AvaCombatEngine([actor, target], tactical_map=tmap, capture_policy="summary")
+
+        self.assertTrue(combat.action_move(actor, 3, 3))
+        self.assertIsNone(tmap.get_occupant(2, 2))
+        self.assertIs(tmap.get_occupant(3, 3), actor)
+        self.assertEqual(actor.position, (3, 3))
+
+    def test_knockback_changes_position_until_blocked(self):
+        tmap = TacticalMap(8, 3)
+        actor = self._participant("Attacker", (1, 1))
+        target = self._participant("Target", (2, 1))
+        tmap.set_occupant(1, 1, actor)
+        tmap.set_occupant(2, 1, target)
+        combat = AvaCombatEngine([actor, target], tactical_map=tmap, capture_policy="summary")
+
+        moved, blocked = combat.apply_knockback(target, blocks=3, source_pos=actor.position, source_name=actor.character.name)
+        self.assertTrue(moved)
+        self.assertFalse(blocked)
+        self.assertEqual(target.position, (5, 1))
+        self.assertIs(tmap.get_occupant(5, 1), target)
 
 
 if __name__ == "__main__":

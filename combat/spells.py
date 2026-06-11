@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+from .catalog import load_catalog
 from .enums import RangeCategory
 
 
@@ -204,3 +205,20 @@ AVALORE_SPELLS: Dict[str, Spell] = {
         description="Shake the earth in a 3-block radius. 3 damage and knock prone. DEX:Acrobatics save for half damage and no prone.",
     ),
 }
+
+
+def _load_spell_catalog() -> None:
+    global AVALORE_SPELLS
+    entries = load_catalog("spells").get("entries")
+    if not entries:
+        return
+    loaded = {}
+    for entry in entries:
+        data = dict(entry)
+        data["range_category"] = RangeCategory(data.get("range_category", RangeCategory.RANGED.value))
+        data["effects"] = [SpellEffect(**effect) for effect in data.get("effects", [])]
+        loaded[data["name"]] = Spell(**data)
+    AVALORE_SPELLS = loaded
+
+
+_load_spell_catalog()

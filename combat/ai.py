@@ -16,7 +16,6 @@ Strategies:
 
 from __future__ import annotations
 
-import random as _random
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
@@ -59,6 +58,21 @@ STRATEGY_DEFAULTS = {
         "prefer_attack_over_stance": False,
     },
 }
+
+
+_TWO_D10_TOTALS: Dict[int, int] = {}
+for _a in range(1, 11):
+    for _b in range(1, 11):
+        _TWO_D10_TOTALS[_a + _b] = _TWO_D10_TOTALS.get(_a + _b, 0) + 1
+
+_CONTESTED_DIFF_COUNTS: Dict[int, int] = {}
+for _left, _left_count in _TWO_D10_TOTALS.items():
+    for _right, _right_count in _TWO_D10_TOTALS.items():
+        _diff = _left - _right
+        _CONTESTED_DIFF_COUNTS[_diff] = (
+            _CONTESTED_DIFF_COUNTS.get(_diff, 0) + _left_count * _right_count
+        )
+_CONTESTED_TOTAL = sum(_CONTESTED_DIFF_COUNTS.values())
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +191,12 @@ class CombatAI:
                     engine.tactical_map, current.position, allowance)
                 tiles = [t for t in reachable if t != target.position]
                 if tiles:
-                    dest = _random.choice(tiles)
+                    dest = engine.rng.choice(tiles)
                     engine.action_move(current, *dest)
 
         # Random stance (50% chance)
-        if _random.random() < 0.5:
-            if current.shield and _random.random() < 0.5:
+        if engine.rng.random() < 0.5:
+            if current.shield and engine.rng.random() < 0.5:
                 engine.action_block(current)
             else:
                 engine.action_evade(current)
@@ -228,6 +242,12 @@ class CombatAI:
                                target: CombatParticipant,
                                weapon: Weapon) -> bool:
         """Try setup feats. Returns True if turn was consumed."""
+
+        # Rage: enter it when a foe is adjacent, then fall through to attack with
+        # the +1 damage active (mutant; one-time per scene).
+        if (current.has_feat("Rage") and not current.rage_active
+                and engine.tactical_map and engine.get_distance(current, target) <= 1):
+            engine.action_rage(current)
 
         # Aberration Slayer: set target type once
         if current.has_feat("Aberration Slayer"):
@@ -355,25 +375,12 @@ class CombatAI:
                         self._log(engine, "Feat hook: Ranger's Gambit (bow at melee range).")
                         return True
 
-        # Piercing Strike / Armor Piercer vs blocking target
+        # Piercing Strike vs blocking target
         if target.shield and target.is_blocking and weapon.name in {"Arming Sword", "Dagger"}:
             if current.has_feat("Piercing Strike"):
                 used = engine.action_piercing_strike(current, target, weapon)
                 if used.get("used"):
                     self._log(engine, "Feat hook: Piercing Strike (target blocking with shield).")
-                    return True
-            if current.has_feat("Armor Piercer"):
-                used = engine.action_armor_piercer(current, target, weapon)
-                if used.get("used"):
-                    self._log(engine, "Feat hook: Armor Piercer (target blocking with shield).")
-                    return True
-
-        # Feint when EV is low
-        if current.has_feat("Feint"):
-            if self.expected_attack_value(current, target, weapon) < 1.0:
-                used = engine.action_feint(current, target)
-                if used.get("used"):
-                    self._log(engine, "Feat hook: Feint (low expected value).")
                     return True
 
         # Trick Shot (ranged)
@@ -548,18 +555,9 @@ class CombatAI:
 
         attack_base = t_weapon.accuracy_bonus + self.attack_mod_for_weapon(target, t_weapon)
         ev_mod = self._evasion_mod(current)
-        diff_counts: Dict[int, int] = {}
-        total = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                for c in range(1, 11):
-                    for d in range(1, 11):
-                        diff = (c + d) - (a + b)
-                        diff_counts[diff] = diff_counts.get(diff, 0) + 1
-                        total += 1
         threshold_val = attack_base - ev_mod
-        valid = sum(count for diff, count in diff_counts.items() if diff > threshold_val)
-        p_evade = valid / total if total else 0.0
+        valid = sum(count for diff, count in _CONTESTED_DIFF_COUNTS.items() if diff > threshold_val)
+        p_evade = valid / _CONTESTED_TOTAL if _CONTESTED_TOTAL else 0.0
 
         hp_thresh = self.config["defend_hp_threshold"]
         prob_thresh = self.config["defend_prob_threshold"]
@@ -588,14 +586,8 @@ class CombatAI:
     @staticmethod
     def prob_2d10_at_least(threshold: int) -> float:
         """Exact probability for 2d10 >= threshold."""
-        total = 0
-        valid = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                s = a + b
-                total += 1
-                if s >= threshold:
-                    valid += 1
+        total = sum(_TWO_D10_TOTALS.values())
+        valid = sum(count for value, count in _TWO_D10_TOTALS.items() if value >= threshold)
         return valid / total if total else 0.0
 
     @staticmethod
@@ -640,18 +632,9 @@ class CombatAI:
         attack_base = weapon.accuracy_bonus + CombatAI.attack_mod_for_weapon(attacker, weapon)
         ev_mod = CombatAI._evasion_mod(defender)
 
-        diff_counts: Dict[int, int] = {}
-        total = 0
-        for a in range(1, 11):
-            for b in range(1, 11):
-                for c in range(1, 11):
-                    for d in range(1, 11):
-                        diff = (a + b) - (c + d)
-                        diff_counts[diff] = diff_counts.get(diff, 0) + 1
-                        total += 1
         threshold = ev_mod - attack_base
-        valid = sum(count for diff, count in diff_counts.items() if diff > threshold)
-        p_hit = valid / total if total else 0.0
+        valid = sum(count for diff, count in _CONTESTED_DIFF_COUNTS.items() if diff > threshold)
+        p_hit = valid / _CONTESTED_TOTAL if _CONTESTED_TOTAL else 0.0
 
         soak = 0.0 if weapon.is_piercing() else CombatAI.expected_soak(defender)
         base_damage = max(0.0, weapon.damage - soak)

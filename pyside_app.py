@@ -38,8 +38,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QSizePolicy,
+    QFrame,
 )
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, QObject, QThread, Signal
 from PySide6.QtGui import QFont, QAction, QColor, QBrush, QPen, QDesktopServices
 
 from avasim import Character, STATS
@@ -52,9 +53,19 @@ from combat import (
     AvaCombatEngine,
     CombatParticipant,
     TacticalMap,
+    BatchRequest,
+    CharacterBuild,
+    ComparisonRequest,
+    ExecutionOptions,
+    RunRequest,
+    ScenarioConfig,
+    build_to_participant,
+    compare,
+    run_batch,
+    validate_run_request,
 )
 from combat.ai import CombatAI
-from combat.batch import BatchRunner, BatchConfig, BatchResult
+from combat.batch import BatchResult
 from combat.enums import RangeCategory, StatusEffect, TerrainType
 from ui import (
     Theme,
@@ -77,10 +88,12 @@ from ui import (
 class BatchChartDialog(QDialog):
     """Dialog that displays batch simulation results as bar charts."""
 
-    def __init__(self, result: BatchResult, parent=None, title: str = "Batch Results"):
+    replay_selected = Signal(object)
+
+    def __init__(self, result, parent=None, title: str = "Batch Results"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumSize(700, 520)
+        self.setMinimumSize(850, 680)
         layout = QVBoxLayout(self)
 
         try:
@@ -96,7 +109,8 @@ class BatchChartDialog(QDialog):
             layout.addWidget(btn)
             return
 
-        fig, axes = plt.subplots(1, 3, figsize=(10, 3.5), tight_layout=True)
+        fig, axes_grid = plt.subplots(2, 2, figsize=(10, 6.5), tight_layout=True)
+        axes = axes_grid.flatten()
 
         # --- Win Rates bar chart ---
         rates = result.win_rates()
@@ -131,6 +145,17 @@ class BatchChartDialog(QDialog):
         ax.set_ylabel("Frequency")
         ax.set_title(f"Rounds Distribution (avg {result.avg_rounds():.1f})")
 
+        # --- Survival curves ---
+        ax = axes[3]
+        survival_curves = getattr(result, "aggregate", {}).get("survival_curves", {})
+        if survival_curves:
+            for index, (team, curve) in enumerate(sorted(survival_curves.items())):
+                ax.plot(range(1, len(curve) + 1), curve, label=team, color=colors[index % len(colors)])
+            ax.legend(fontsize=7)
+        ax.set_xlabel("Round")
+        ax.set_ylabel("Average survivors")
+        ax.set_title("Survival Curves")
+
         # Render to QPixmap via buffer
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=120)
@@ -152,9 +177,54 @@ class BatchChartDialog(QDialog):
         summary_text.setMaximumHeight(130)
         layout.addWidget(summary_text)
 
+        representative = getattr(result, "representative_replays", {})
+        if representative:
+            replay_row = QHBoxLayout()
+            replay_row.addWidget(QLabel("Representative replay:"))
+            replay_combo = QComboBox()
+            for seed, replay in representative.items():
+                replay_combo.addItem(f"Seed {seed}: {replay.winner or replay.outcome}", seed)
+            replay_row.addWidget(replay_combo)
+            replay_button = QPushButton("Load Replay")
+            replay_button.clicked.connect(
+                lambda: self.replay_selected.emit(representative[replay_combo.currentData()])
+            )
+            replay_row.addWidget(replay_button)
+            replay_row.addStretch()
+            layout.addLayout(replay_row)
+
         btn = QDialogButtonBox(QDialogButtonBox.Ok)
         btn.accepted.connect(self.accept)
         layout.addWidget(btn)
+
+
+class AnalysisWorker(QObject):
+    """Run analysis without blocking the Qt event loop."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+    progress = Signal(int, int)
+
+    def __init__(self, kind: str, request) -> None:
+        super().__init__()
+        self.kind = kind
+        self.request = request
+        self.cancel_requested = False
+
+    def cancel(self) -> None:
+        self.cancel_requested = True
+
+    def execute(self) -> None:
+        try:
+            callback = lambda current, total: self.progress.emit(current, total)
+            cancel_check = lambda: self.cancel_requested
+            if self.kind == "batch":
+                result = run_batch(self.request, progress_callback=callback, cancel_check=cancel_check)
+            else:
+                result = compare(self.request, progress_callback=callback, cancel_check=cancel_check)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -423,73 +493,12 @@ class CombatantEditor(QGroupBox):
         return spin
 
     def to_participant(self) -> CombatParticipant:
-        char = Character(name=self.name_input.text() or self.title())
-        # apply stats
-        for stat, spin in self.stat_spins.items():
-            char.base_stats[stat] = int(spin.value())
-        # apply skills
-        for stat, skills in self.skill_spins.items():
-            for skill, spin in skills.items():
-                char.base_skills[stat][skill] = int(spin.value())
-
-        # clamp HP to max
-        max_hp = char.get_max_hp()
-        current_hp = max(0, min(int(self.hp_input.value()), max_hp))
-        char.current_hp = current_hp
-
-        armor_name = self.armor_choice.currentText()
-        armor = None if armor_name == "None" else copy.deepcopy(AVALORE_ARMOR[armor_name])
-
-        hand1_sel = self.hand1_choice.currentText()
-        hand2_sel = self.hand2_choice.currentText()
-
-        weapon_main = None
-        weapon_offhand = None
-        shield = None
-
-        def assign_hand(selection: str):
-            nonlocal weapon_main, weapon_offhand, shield
-            if weapon_main and getattr(weapon_main, "is_two_handed", False):
-                return
-            if not selection or selection == "(None)":
-                return
-            if selection in AVALORE_WEAPONS:
-                weapon_obj = copy.deepcopy(AVALORE_WEAPONS[selection])
-                if weapon_obj.is_two_handed:
-                    weapon_main = weapon_obj
-                    weapon_offhand = None
-                    shield = None
-                    return
-                if weapon_main is None:
-                    weapon_main = weapon_obj
-                elif weapon_offhand is None:
-                    weapon_offhand = weapon_obj
-            elif selection in AVALORE_SHIELDS and shield is None:
-                shield = copy.deepcopy(AVALORE_SHIELDS[selection])
-
-        assign_hand(hand1_sel)
-        assign_hand(hand2_sel)
-
-        # Collect selected feats
-        selected_feats = [
-            AVALORE_FEATS[name] for name, cb in self.feat_checks.items() if cb.isChecked()
-        ]
-
-        participant = CombatParticipant(
-            character=char,
-            current_hp=current_hp,
-            max_hp=char.get_max_hp(),
-            anima=int(self.anima_input.value()),
-            max_anima=int(self.max_anima_input.value()),
-            weapon_main=weapon_main,
-            weapon_offhand=weapon_offhand,
-            armor=armor,
-            shield=shield,
-            feats=selected_feats,
+        return build_to_participant(
+            CharacterBuild.from_dict(
+                self.to_template(),
+                default_name=self.name_input.text() or self.title(),
+            )
         )
-        team_val = self.team_choice.currentText()
-        participant.team = "" if team_val == "FFA" else team_val
-        return participant
 
     def to_template(self) -> dict:
         return {
@@ -878,6 +887,10 @@ class MainWindow(QWidget):
         self._last_engine: AvaCombatEngine | None = None
         self.decision_log: list[str] = []
         self.combat_ai = CombatAI(strategy="balanced", decision_log=self.decision_log)
+        self._analysis_thread: QThread | None = None
+        self._analysis_worker: AnalysisWorker | None = None
+        self._analysis_kind: str | None = None
+        self._last_batch_report = None
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -1219,6 +1232,9 @@ class MainWindow(QWidget):
             "char2": self.defender_editor.to_template(),
             "show_math": self.show_math_check.isChecked(),
             "scenario": self._serialize_scenario(),
+            "analysis_seed": self.analysis_seed_spin.value() if hasattr(self, "analysis_seed_spin") else 12345,
+            "analysis_strategy": self.analysis_strategy_combo.currentText() if hasattr(self, "analysis_strategy_combo") else "balanced",
+            "allow_invalid_builds": self.allow_invalid_check.isChecked() if hasattr(self, "allow_invalid_check") else False,
         }
 
     def _apply_setup_data(self, data: dict) -> None:
@@ -1243,6 +1259,12 @@ class MainWindow(QWidget):
         self._set_combo_text(self.mode_combo, data.get("mode", self.mode_combo.currentText()))
         self._set_combo_text(self.surprise_combo, data.get("surprise", self.surprise_combo.currentText()))
         self.show_math_check.setChecked(bool(data.get("show_math", False)))
+        if hasattr(self, "analysis_seed_spin"):
+            self.analysis_seed_spin.setValue(int(data.get("analysis_seed", 12345)))
+        if hasattr(self, "analysis_strategy_combo"):
+            self._set_combo_text(self.analysis_strategy_combo, data.get("analysis_strategy", "balanced"))
+        if hasattr(self, "allow_invalid_check"):
+            self.allow_invalid_check.setChecked(bool(data.get("allow_invalid_builds", False)))
         if "scenario" in data:
             self._apply_scenario_dict(data.get("scenario", {}), update_preview=False)
             if hasattr(self, "preset_combo"):
@@ -1252,6 +1274,211 @@ class MainWindow(QWidget):
         self._on_surprise_changed()
         self._on_mode_changed()
         self._refresh_scenario_preview()
+
+    def _build_analysis_request(
+        self,
+        templates: list[dict] | None = None,
+        capture_policy: str = "summary",
+    ) -> RunRequest:
+        raw_templates = templates or [editor.to_template() for editor in self.combatant_editors]
+        builds = [
+            CharacterBuild.from_dict(template, default_name=f"Character {index + 1}")
+            for index, template in enumerate(raw_templates)
+        ]
+        scenario = ScenarioConfig.from_dict(self._serialize_scenario())
+        surprise = self.surprise_combo.currentText()
+        scenario.party_surprised = surprise == "Party Surprised"
+        scenario.party_initiated = surprise == "Party Ambushes"
+        execution = ExecutionOptions(
+            turn_limit=200,
+            capture_policy=capture_policy,
+            default_ai_profile=self.analysis_strategy_combo.currentText(),
+            allow_invalid_builds=self.allow_invalid_check.isChecked(),
+        )
+        return RunRequest(
+            builds=builds,
+            scenario=scenario,
+            seed=self.analysis_seed_spin.value(),
+            execution=execution,
+            metadata={"source": "pyside"},
+        )
+
+    def _show_analysis_validation(self, request: RunRequest) -> bool:
+        issues = validate_run_request(request)
+        errors = [issue for issue in issues if issue.severity == "error"]
+        if errors and not request.execution.allow_invalid_builds:
+            detail = "\n".join(f"- {issue.path}: {issue.message}" for issue in errors[:12])
+            QMessageBox.warning(
+                self,
+                "Build validation failed",
+                "The analysis was blocked because the setup is invalid.\n\n"
+                + detail
+                + "\n\nEnable the advanced invalid-build override to run it intentionally.",
+            )
+            return False
+        if issues:
+            self._show_toast(f"Analysis includes {len(issues)} validation warning(s).", "warning")
+        return True
+
+    def _start_analysis(self, kind: str, request) -> None:
+        if self._analysis_thread is not None:
+            self._cancel_analysis()
+            return
+
+        worker = AnalysisWorker(kind, request)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+
+        self._analysis_worker = worker
+        self._analysis_thread = thread
+        self._analysis_kind = kind
+
+        thread.started.connect(worker.execute)
+        worker.progress.connect(self._on_analysis_progress)
+        worker.finished.connect(self._on_analysis_finished)
+        worker.failed.connect(self._on_analysis_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._reset_analysis_ui)
+
+        self.simulate_button.setEnabled(False)
+        if kind == "batch":
+            self.batch_button.setEnabled(True)
+            self.batch_button.setText("Cancel Batch")
+            self.compare_button.setEnabled(False)
+        else:
+            self.batch_button.setEnabled(False)
+            self.compare_button.setEnabled(True)
+            self.compare_button.setText("Cancel Compare")
+        self._show_toast("Analysis started in the background.", "info")
+        thread.start()
+
+    def _cancel_analysis(self) -> None:
+        if self._analysis_worker is not None:
+            self._analysis_worker.cancel()
+            self._show_toast("Cancellation requested; finishing the current run.", "warning")
+        self.batch_button.setEnabled(False)
+        self.compare_button.setEnabled(False)
+
+    def _on_analysis_progress(self, current: int, total: int) -> None:
+        total = max(total, 1)
+        if self._analysis_kind == "batch":
+            self.batch_button.setText(f"Cancel Batch ({current}/{total})")
+        elif self._analysis_kind == "compare":
+            self.compare_button.setText(f"Cancel Compare ({current}/{total})")
+
+    def _on_analysis_finished(self, result) -> None:
+        if self._analysis_kind == "compare":
+            summary = result.summary()
+            left_label = self._analysis_label(result.left, "Current")
+            right_label = self._analysis_label(result.right, "Variant")
+            self._set_action_log(["Comparison Complete", ""] + summary.splitlines())
+            self.map_view.setPlainText(summary)
+            dlg = LoadoutComparisonDialog(result.left, result.right, left_label, right_label, parent=self)
+            dlg.exec()
+            self._show_toast("Comparison complete.", "success")
+            self._save_settings()
+            return
+
+        self._last_batch_report = result
+        summary = result.summary()
+        prefix = "Batch Analysis Cancelled" if getattr(result, "cancelled", False) else "Batch Analysis Complete"
+        self._set_action_log([prefix, ""] + summary.splitlines())
+        self.map_view.setPlainText(summary)
+        dlg = BatchChartDialog(result, parent=self)
+        dlg.replay_selected.connect(self._load_analysis_replay)
+        dlg.exec()
+        self._show_toast(
+            f"Batch done: {result.num_combats} combats in {result.elapsed_seconds:.2f}s",
+            "warning" if getattr(result, "cancelled", False) else "success",
+        )
+        self._save_settings()
+
+    def _analysis_label(self, report, fallback: str) -> str:
+        if getattr(report, "results", None):
+            return str(report.results[0].metadata.get("label", fallback))
+        return fallback
+
+    def _on_analysis_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Analysis failed", f"An error occurred during analysis:\n{message}")
+
+    def _reset_analysis_ui(self) -> None:
+        self.simulate_button.setEnabled(True)
+        self.batch_button.setEnabled(True)
+        self.compare_button.setEnabled(True)
+        self.batch_button.setText("RUN BATCH SIMULATION")
+        self.compare_button.setText("COMPARE LOADOUTS")
+        self._analysis_thread = None
+        self._analysis_worker = None
+        self._analysis_kind = None
+
+    def _format_analysis_event(self, event: dict) -> str:
+        data = event.get("data", {})
+        event_type = event.get("type", "event")
+        round_num = event.get("round", "?")
+        if event_type == "attack":
+            hit = "hit" if data.get("hit") else "miss"
+            crit = " crit" if data.get("critical") else ""
+            return (
+                f"#{event.get('seq')} R{round_num}: {data.get('attacker')} attacks "
+                f"{data.get('defender')} with {data.get('weapon')} ({hit}{crit}, "
+                f"{data.get('damage', 0)} damage)"
+            )
+        if event_type == "movement":
+            return (
+                f"#{event.get('seq')} R{round_num}: {data.get('actor')} "
+                f"{data.get('movement_type')} {tuple(data.get('origin', []))} -> "
+                f"{tuple(data.get('destination', []))}"
+            )
+        if event_type == "healing":
+            return (
+                f"#{event.get('seq')} R{round_num}: {data.get('source')} heals "
+                f"{data.get('target')} for {data.get('amount', 0)} via {data.get('cause')}"
+            )
+        if event_type.startswith("status_"):
+            return f"#{event.get('seq')} R{round_num}: {data.get('target')} {event_type} {data.get('status')}"
+        return f"#{event.get('seq')} R{round_num}: {event_type} {data}"
+
+    def _load_analysis_replay(self, run_result) -> None:
+        outcome = run_result.winner or run_result.outcome
+        lines = [
+            f"Representative Replay: seed {run_result.seed}",
+            f"Outcome: {outcome}",
+            f"Rounds: {run_result.rounds}",
+            "",
+        ]
+        if run_result.combat_log:
+            lines.extend(run_result.combat_log)
+        else:
+            lines.extend(self._format_analysis_event(event) for event in run_result.events)
+        self._set_action_log(lines)
+        self.map_view.setPlainText(
+            "\n".join([
+                f"Seed: {run_result.seed}",
+                f"Outcome: {outcome}",
+                f"Rounds: {run_result.rounds}",
+                "",
+                "Final states:",
+                *[
+                    f"{state.name} [{state.team or 'FFA'}]: {state.final_hp}/{state.max_hp} HP, "
+                    f"{'alive' if state.is_alive else 'defeated'}"
+                    for state in run_result.participants
+                ],
+            ])
+        )
+        self.status_view.setPlainText(
+            "\n".join(
+                f"{state.name}: {state.final_hp}/{state.max_hp} HP, dealt {state.damage_dealt}, "
+                f"taken {state.damage_taken}"
+                for state in run_result.participants
+            )
+        )
+        self._last_engine = None
+        self._set_replay_data(run_result.snapshots)
+        self._show_toast(f"Loaded representative replay seed {run_result.seed}.", "info")
 
     def _build_scenario_presets(self) -> dict[str, dict]:
         duel = {
@@ -1504,6 +1731,32 @@ class MainWindow(QWidget):
         self._refresh_scenario_preview()
         if hasattr(self, "preset_combo"):
             self.preset_combo.setCurrentText("Custom")
+
+    def _on_scenario_tool_changed(self, index: int) -> None:
+        if hasattr(self, "map_tool_combo"):
+            self.map_tool_combo.setCurrentIndex(index)
+
+    def _update_scenario_overlays(self) -> None:
+        self._refresh_scenario_preview()
+
+    def _load_scenario_preset(self) -> None:
+        if not hasattr(self, "scenario_preset_combo"):
+            return
+        name = self.scenario_preset_combo.currentText()
+        preset = self._scenario_presets.get(name)
+        if preset:
+            self._apply_scenario_dict(preset)
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.setCurrentText(name)
+
+    def _replay_prev(self) -> None:
+        self._step_replay(-1)
+
+    def _replay_next(self) -> None:
+        self._step_replay(1)
+
+    def _on_replay_slider_moved(self, value: int) -> None:
+        self._on_replay_slider(value)
 
     def _on_scenario_cell_hover(self, x: int, y: int) -> None:
         self._hover_cell = (x, y)
@@ -2177,88 +2430,33 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Simulation failed", f"An error occurred while simulating:\n{exc}")
 
     def _run_batch_simulation(self) -> None:
-        """Run N batch simulations and display win-rate statistics."""
-        # Ask the user how many combats to run
-        from PySide6.QtWidgets import QInputDialog
-        num, ok = QInputDialog.getInt(self, "Batch Simulation", "Number of combats:", 100, 1, 10000, 50)
-        if not ok:
+        """Run N simulations through the canonical pure-Python analysis API."""
+        if self._analysis_thread is not None:
+            self._cancel_analysis()
             return
 
-        try:
-            # Capture editor templates so the factory creates fresh participants each time
-            templates = [ed.to_template() for ed in self.combatant_editors]
-            team_assignments = [ed.team_choice.currentText() for ed in self.combatant_editors]
-
-            def make_participants() -> list:
-                parts = []
-                for i, tmpl in enumerate(templates):
-                    ed = CombatantEditor(f"Character {i + 1}")
-                    ed.load_template(tmpl)
-                    p = ed.to_participant()
-                    team_text = team_assignments[i]
-                    p.team = "" if team_text == "FFA" else team_text
-                    parts.append(p)
-                    ed.deleteLater()
-                return parts
-
-            def make_map(participants):
-                return self._build_tactical_map(participants)
-
-            config = BatchConfig(
-                participants_factory=make_participants,
-                map_factory=make_map,
-                num_combats=num,
-                turn_limit=200,
-                strategy="balanced",
-                time_of_day=self._time_of_day,
-                surprise="none",
-            )
-            surprise_text = self.surprise_combo.currentText()
-            if surprise_text == "Party Surprised":
-                config.surprise = "surprised"
-            elif surprise_text == "Party Ambushes":
-                config.surprise = "ambush"
-
-            self.simulate_button.setEnabled(False)
-            self.batch_button.setEnabled(False)
-            self.batch_button.setText("Running...")
-            QApplication.processEvents()
-
-            result = BatchRunner.run(config, progress_callback=lambda i, n: None)
-
-            # Display results
-            summary_lines = result.summary().split("\n")
-            action_lines = ["Batch Simulation Complete", ""] + summary_lines
-            self._set_action_log(action_lines)
-            self.map_view.setPlainText(result.summary())
-            self._show_toast(f"Batch done: {num} combats in {result.elapsed_seconds:.1f}s", "info")
-
-            # Show chart dialog
-            dlg = BatchChartDialog(result, parent=self)
-            dlg.exec()
-        except Exception as exc:
-            QMessageBox.critical(self, "Batch failed", f"An error occurred during batch simulation:\n{exc}")
-        finally:
-            self.simulate_button.setEnabled(True)
-            self.batch_button.setEnabled(True)
-            self.batch_button.setText("Run Batch Simulation")
+        run_request = self._build_analysis_request(capture_policy="summary")
+        if not self._show_analysis_validation(run_request):
+            return
+        batch_request = BatchRequest(
+            run_request=run_request,
+            num_runs=int(self.batch_count_spin.value()),
+            base_seed=int(self.analysis_seed_spin.value()),
+            parallelism=1,
+            sample_replays=True,
+        )
+        self._save_settings()
+        self._start_analysis("batch", batch_request)
 
     def _compare_loadouts(self) -> None:
-        """Run two batch simulations side-by-side: current setup (A) vs a variant (B).
-
-        The user picks which combatant to modify and selects an alternate
-        weapon.  Both batches run with the same number of combats and the
-        results are shown in a comparison dialog with grouped bar charts.
-        """
+        """Run paired A/B analysis with identical seed sequences."""
         from PySide6.QtWidgets import QInputDialog
 
-        # Ask for number of combats
-        num, ok = QInputDialog.getInt(
-            self, "Compare Loadouts", "Number of combats per loadout:", 100, 10, 10000, 50)
-        if not ok:
+        if self._analysis_thread is not None:
+            self._cancel_analysis()
             return
 
-        # Ask which combatant to modify
+        num = int(self.compare_count_spin.value())
         names = [ed.name_input.text() or f"Character {i+1}" for i, ed in enumerate(self.combatant_editors)]
         char_name, ok = QInputDialog.getItem(
             self, "Compare Loadouts", "Modify which combatant?", names, 0, False)
@@ -2268,7 +2466,7 @@ class MainWindow(QWidget):
 
         # Ask for the alternate weapon
         weapon_names = sorted(AVALORE_WEAPONS.keys())
-        current_weapon = self.combatant_editors[char_idx].hand1_combo.currentText()
+        current_weapon = self.combatant_editors[char_idx].hand1_choice.currentText()
         alt_weapon, ok = QInputDialog.getItem(
             self, "Compare Loadouts",
             f"Alternate weapon for {char_name}\n(current: {current_weapon}):",
@@ -2277,85 +2475,28 @@ class MainWindow(QWidget):
             self._show_toast("Same weapon selected — nothing to compare.", "warning")
             return
 
-        try:
-            templates = [ed.to_template() for ed in self.combatant_editors]
-            team_assignments = [ed.team_choice.currentText() for ed in self.combatant_editors]
+        templates = [ed.to_template() for ed in self.combatant_editors]
+        templates_b = [copy.deepcopy(template) for template in templates]
+        templates_b[char_idx]["hand1"] = alt_weapon
 
-            def _make_factory(tmpl_list):
-                def factory():
-                    parts = []
-                    for i, tmpl in enumerate(tmpl_list):
-                        ed = CombatantEditor(f"Character {i + 1}")
-                        ed.load_template(tmpl)
-                        p = ed.to_participant()
-                        team_text = team_assignments[i]
-                        p.team = "" if team_text == "FFA" else team_text
-                        parts.append(p)
-                        ed.deleteLater()
-                    return parts
-                return factory
+        request_a = self._build_analysis_request(templates=templates, capture_policy="summary")
+        request_b = self._build_analysis_request(templates=templates_b, capture_policy="summary")
+        request_a.metadata["label"] = f"{char_name} w/ {current_weapon}"
+        request_b.metadata["label"] = f"{char_name} w/ {alt_weapon}"
+        if not self._show_analysis_validation(request_a):
+            return
+        if not self._show_analysis_validation(request_b):
+            return
 
-            def make_map(participants):
-                return self._build_tactical_map(participants)
-
-            surprise_text = self.surprise_combo.currentText()
-            surprise_val = "none"
-            if surprise_text == "Party Surprised":
-                surprise_val = "surprised"
-            elif surprise_text == "Party Ambushes":
-                surprise_val = "ambush"
-
-            # --- Run A (current setup) ---
-            config_a = BatchConfig(
-                participants_factory=_make_factory(templates),
-                map_factory=make_map,
-                num_combats=num,
-                turn_limit=200,
-                strategy="balanced",
-                time_of_day=self._time_of_day,
-                surprise=surprise_val,
-            )
-            self.simulate_button.setEnabled(False)
-            self.batch_button.setEnabled(False)
-            self.compare_button.setEnabled(False)
-            self.compare_button.setText("Running A...")
-            QApplication.processEvents()
-            result_a = BatchRunner.run(config_a)
-
-            # --- Build variant B templates ---
-            templates_b = [copy.deepcopy(t) for t in templates]
-            templates_b[char_idx]["hand1"] = alt_weapon
-
-            config_b = BatchConfig(
-                participants_factory=_make_factory(templates_b),
-                map_factory=make_map,
-                num_combats=num,
-                turn_limit=200,
-                strategy="balanced",
-                time_of_day=self._time_of_day,
-                surprise=surprise_val,
-            )
-            self.compare_button.setText("Running B...")
-            QApplication.processEvents()
-            result_b = BatchRunner.run(config_b)
-
-            label_a = f"{char_name} w/ {current_weapon}"
-            label_b = f"{char_name} w/ {alt_weapon}"
-
-            dlg = LoadoutComparisonDialog(result_a, result_b, label_a, label_b, parent=self)
-            dlg.exec()
-
-            self._show_toast(
-                f"Comparison: {num} combats × 2 loadouts in "
-                f"{result_a.elapsed_seconds + result_b.elapsed_seconds:.1f}s", "info")
-        except Exception as exc:
-            QMessageBox.critical(self, "Compare failed",
-                                 f"An error occurred during comparison:\n{exc}")
-        finally:
-            self.simulate_button.setEnabled(True)
-            self.batch_button.setEnabled(True)
-            self.compare_button.setEnabled(True)
-            self.compare_button.setText("Compare Loadouts")
+        comparison_request = ComparisonRequest(
+            left=request_a,
+            right=request_b,
+            num_runs=num,
+            base_seed=int(self.analysis_seed_spin.value()),
+            parallelism=1,
+        )
+        self._save_settings()
+        self._start_analysis("compare", comparison_request)
 
     def move_attacker(self):
         try:
@@ -2460,7 +2601,8 @@ class MainWindow(QWidget):
         self.replay_slider.setValue(max(0, count - 1))
         self.replay_slider.blockSignals(False)
         self.replay_index = max(0, count - 1)
-        self.replay_play.setText("Play")
+        self.replay_play_button.setText("Play")
+        self.replay_play_button.setChecked(False)
         if count:
             self._render_visual_map(self.replay_snapshots[self.replay_index])
         else:
@@ -2482,20 +2624,24 @@ class MainWindow(QWidget):
             return
         if self.replay_timer.isActive():
             self.replay_timer.stop()
-            self.replay_play.setText("Play")
+            self.replay_play_button.setText("Play")
+            self.replay_play_button.setChecked(False)
         else:
-            self.replay_play.setText("Pause")
+            self.replay_play_button.setText("Pause")
+            self.replay_play_button.setChecked(True)
             self.replay_timer.start()
 
     def _advance_replay(self) -> None:
         if not self.replay_snapshots:
             self.replay_timer.stop()
-            self.replay_play.setText("Play")
+            self.replay_play_button.setText("Play")
+            self.replay_play_button.setChecked(False)
             return
         next_idx = self.replay_index + 1
         if next_idx >= len(self.replay_snapshots):
             self.replay_timer.stop()
-            self.replay_play.setText("Play")
+            self.replay_play_button.setText("Play")
+            self.replay_play_button.setChecked(False)
             return
         self.replay_slider.setValue(next_idx)
 
@@ -2934,6 +3080,28 @@ class MainWindow(QWidget):
         surprise_row.addStretch()
         settings_content.addLayout(surprise_row)
 
+        analysis_row = QHBoxLayout()
+        analysis_row.addWidget(QLabel("AI:"))
+        self.analysis_strategy_combo = QComboBox()
+        self.analysis_strategy_combo.addItems(["balanced", "aggressive", "defensive", "random"])
+        self.analysis_strategy_combo.setMaximumWidth(120)
+        self.analysis_strategy_combo.setToolTip("Default AI profile used by batch and comparison analysis")
+        analysis_row.addWidget(self.analysis_strategy_combo)
+        analysis_row.addWidget(QLabel("Seed:"))
+        self.analysis_seed_spin = QSpinBox()
+        self.analysis_seed_spin.setRange(0, 2147483647)
+        self.analysis_seed_spin.setValue(12345)
+        self.analysis_seed_spin.setSingleStep(1)
+        self.analysis_seed_spin.setMaximumWidth(110)
+        self.analysis_seed_spin.setToolTip("Base seed for deterministic runs; batches use seed + run index")
+        analysis_row.addWidget(self.analysis_seed_spin)
+        analysis_row.addStretch()
+        settings_content.addLayout(analysis_row)
+
+        self.allow_invalid_check = QCheckBox("Advanced: allow invalid builds")
+        self.allow_invalid_check.setToolTip("Run analysis even when validation reports errors; issues are recorded in results")
+        settings_content.addWidget(self.allow_invalid_check)
+
         # Decision notes checkbox
         self.show_math_check = QCheckBox("Show decision notes")
         self.show_math_check.setToolTip("Include brief decision math/choices in the log")
@@ -3222,8 +3390,10 @@ class MainWindow(QWidget):
             width=self.scenario_width,
             height=self.scenario_height
         )
-        self.setup_map_widget.set_on_click(self._on_scenario_cell_clicked)
-        self.setup_map_widget.set_on_hover(self._on_scenario_cell_hover)
+        self.setup_map_widget.set_interaction_handlers(
+            on_click=self._on_scenario_cell_clicked,
+            on_hover=self._on_scenario_cell_hover,
+        )
         map_layout.addWidget(self.setup_map_widget)
 
         # Map controls moved here from scenario section
