@@ -7,10 +7,10 @@ from typing import Dict, Iterable, List
 from avasim import SKILL_MAX, SKILL_MIN, STAT_MAX, STAT_MIN, STATS
 
 from .contracts import CharacterBuild, RunRequest, ScenarioConfig, ValidationIssue
-from .enums import TerrainType, validate_loadout
+from .enums import RangeCategory, TerrainType, validate_loadout
 from .feats import AVALORE_FEATS
 from .items import AVALORE_ARMOR, AVALORE_SHIELDS, AVALORE_WEAPONS
-from .spells import AVALORE_SPELLS
+from .spells import AVALORE_SPELLS, MAGE_LEVELS, OPPOSED_DISCIPLINES
 
 
 def _issue(code: str, path: str, message: str, severity: str = "error") -> ValidationIssue:
@@ -68,11 +68,20 @@ def validate_build(build: CharacterBuild | dict, path: str = "build") -> List[Va
     if build.anima < 0 or build.max_anima < 0 or build.anima > build.max_anima:
         issues.append(_issue("invalid_anima", f"{path}.anima", "Anima must be between zero and max Anima."))
 
+    def _hand_base(hand: str) -> tuple:
+        improvised = hand.startswith("Improvised ")
+        return (hand[len("Improvised "):] if improvised else hand), improvised
+
     hands = [hand for hand in (build.hand1, build.hand2) if hand and hand != "(None)"]
-    unknown_hands = [hand for hand in hands if hand not in AVALORE_WEAPONS and hand not in AVALORE_SHIELDS]
-    for hand in unknown_hands:
-        issues.append(_issue("unknown_equipment", f"{path}.equipment", f"Unknown hand equipment: {hand}."))
-    weapon_names = [hand for hand in hands if hand in AVALORE_WEAPONS]
+    resolved_hands = [(hand, *_hand_base(hand)) for hand in hands]
+    for hand, base, _improvised in resolved_hands:
+        if base not in AVALORE_WEAPONS and base not in AVALORE_SHIELDS:
+            issues.append(_issue("unknown_equipment", f"{path}.equipment", f"Unknown hand equipment: {hand}."))
+    for hand, base, improvised in resolved_hands:
+        if improvised and base in AVALORE_WEAPONS and AVALORE_WEAPONS[base].range_category == RangeCategory.RANGED:
+            issues.append(_issue("improvised_ranged", f"{path}.equipment",
+                                 f"{hand}: ranged weapon templates cannot be improvised."))
+    weapon_names = [base for _, base, _i in resolved_hands if base in AVALORE_WEAPONS]
     if not validate_loadout(weapon_names):
         issues.append(_issue("invalid_loadout", f"{path}.equipment", "Selected weapons exceed the supported loadout limits."))
     if any(AVALORE_WEAPONS[name].is_two_handed for name in weapon_names) and len(hands) > 1:
@@ -80,8 +89,8 @@ def validate_build(build: CharacterBuild | dict, path: str = "build") -> List[Va
     if build.armor != "None" and build.armor not in AVALORE_ARMOR:
         issues.append(_issue("unknown_armor", f"{path}.armor", f"Unknown armor: {build.armor}."))
 
-    for hand in hands:
-        item = AVALORE_WEAPONS.get(hand) or AVALORE_SHIELDS.get(hand)
+    for hand, base, _improvised in resolved_hands:
+        item = AVALORE_WEAPONS.get(base) or AVALORE_SHIELDS.get(base)
         if item is not None:
             issues.extend(_check_requirements(build, item.stat_requirements, f"{path}.equipment", hand))
     if build.armor in AVALORE_ARMOR:
@@ -93,9 +102,49 @@ def validate_build(build: CharacterBuild | dict, path: str = "build") -> List[Va
             issues.append(_issue("unknown_feat", f"{path}.feats", f"Unknown feat: {feat_name}."))
         else:
             issues.extend(_check_requirements(build, feat.stat_requirements, f"{path}.feats", feat_name))
+    issues.extend(_validate_arcana(build, path))
+    return issues
+
+
+def _validate_arcana(build: CharacterBuild, path: str) -> List[ValidationIssue]:
+    """Canonical arcane checks: known spells, the magic wheel, and mage tiers."""
+    issues: List[ValidationIssue] = []
+    opposed = OPPOSED_DISCIPLINES.get(build.primary_discipline, "")
+    if build.primary_discipline and build.primary_discipline not in OPPOSED_DISCIPLINES:
+        issues.append(_issue("unknown_discipline", f"{path}.primary_discipline",
+                             f"Unknown primary discipline: {build.primary_discipline}."))
     for spell_name in build.spells:
-        if spell_name not in AVALORE_SPELLS:
+        spell = AVALORE_SPELLS.get(spell_name)
+        if spell is None:
             issues.append(_issue("unknown_spell", f"{path}.spells", f"Unknown spell: {spell_name}."))
+            continue
+        issues.extend(_check_requirements(build, spell.stat_requirements, f"{path}.spells", spell_name))
+        if opposed and spell.discipline == opposed:
+            issues.append(_issue(
+                "opposed_discipline", f"{path}.spells",
+                f"{spell_name} is {spell.discipline} - opposite {build.primary_discipline} on the magic wheel and cannot be learned."))
+        if spell.tier == "capstone" and build.primary_discipline and spell.discipline != build.primary_discipline:
+            issues.append(_issue(
+                "foreign_capstone", f"{path}.spells",
+                f"{spell_name} is the {spell.discipline} capstone; only the primary discipline's capstone is known."))
+    if build.spells and not build.primary_discipline:
+        issues.append(_issue("missing_discipline", f"{path}.primary_discipline",
+                             "A mage must declare a primary discipline.", "warning"))
+    if build.max_anima:
+        pools = {anima for anima, _ in MAGE_LEVELS.values()}
+        if build.max_anima not in pools:
+            issues.append(_issue(
+                "nonstandard_anima_pool", f"{path}.max_anima",
+                f"Max anima {build.max_anima} does not match a mage level pool {sorted(pools)}.", "warning"))
+        else:
+            _, spell_cap = next(spec for spec in MAGE_LEVELS.values() if spec[0] == build.max_anima)
+            learnable = [name for name in build.spells
+                         if AVALORE_SPELLS.get(name)
+                         and AVALORE_SPELLS[name].tier not in ("cantrip", "capstone")]
+            if len(learnable) > spell_cap:
+                issues.append(_issue(
+                    "too_many_spells", f"{path}.spells",
+                    f"{len(learnable)} learned spells exceed the {spell_cap} allowed at this anima pool.", "warning"))
     return issues
 
 

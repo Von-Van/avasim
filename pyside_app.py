@@ -49,6 +49,7 @@ from combat import (
     AVALORE_SHIELDS,
     AVALORE_WEAPONS,
     AVALORE_FEATS,
+    AVALORE_SPELLS,
     Feat,
     AvaCombatEngine,
     CombatParticipant,
@@ -379,10 +380,18 @@ class CombatantEditor(QGroupBox):
             row += 1
         skills_box.setLayout(skills_layout)
 
-        # Equipment choices (hands can take a weapon or a shield)
-        hand_items = ["(None)"] + list(AVALORE_WEAPONS.keys()) + list(AVALORE_SHIELDS.keys())
+        # Equipment choices (hands can take a weapon or a shield; non-ranged
+        # templates and shields can also be improvised at -1 aim/-1 dmg or -1 block)
+        improvised_weapons = [
+            f"Improvised {name}" for name, w in AVALORE_WEAPONS.items()
+            if w.range_category != RangeCategory.RANGED and name != "Unarmed"
+        ]
+        improvised_shields = [f"Improvised {name}" for name in AVALORE_SHIELDS]
+        hand_items = (["(None)"] + list(AVALORE_WEAPONS.keys()) + list(AVALORE_SHIELDS.keys())
+                      + improvised_weapons + improvised_shields)
         self._two_handed_names = {name for name, w in AVALORE_WEAPONS.items() if getattr(w, "is_two_handed", False)}
-        self._weapon_names = set(AVALORE_WEAPONS.keys())
+        self._two_handed_names |= {f"Improvised {name}" for name in self._two_handed_names}
+        self._weapon_names = set(AVALORE_WEAPONS.keys()) | set(improvised_weapons)
         self._large_shield_name = "Large Shield"
         self.hand1_choice = QComboBox(); self.hand1_choice.addItems(hand_items)
         self.hand1_choice.setCurrentText("Arming Sword")
@@ -477,6 +486,48 @@ class CombatantEditor(QGroupBox):
         feat_box.setLayout(feat_box_layout)
 
         self.layout().addWidget(feat_box)
+
+        # Spellbook picker (canonical Grimoire; ⚙ = simulated in combat)
+        spell_box = QGroupBox("Spellbook (⚙ = engine-wired)")
+        spell_box.setCheckable(True)
+        spell_box.setChecked(False)  # collapsed by default
+        spell_outer = QVBoxLayout()
+        self.primary_discipline_choice = QComboBox()
+        self.primary_discipline_choice.addItems(
+            ["(None)", "Artifice", "Cursesmithy", "Ether", "Force", "Ichor", "Tellurgy"])
+        self.primary_discipline_choice.setToolTip(
+            "Primary discipline: +1 to its casting rolls and miscasts cost no anima.\n"
+            "The opposite discipline on the magic wheel cannot be learned.")
+        primary_row = QHBoxLayout()
+        primary_row.addWidget(QLabel("Primary discipline"))
+        primary_row.addWidget(self.primary_discipline_choice)
+        primary_row.addStretch()
+        spell_outer.addLayout(primary_row)
+        spell_layout = QGridLayout()
+        spell_layout.setSpacing(2)
+        self.spell_checks: Dict[str, QCheckBox] = {}
+        spell_row = 0
+        for spell_name, spell_obj in sorted(
+                AVALORE_SPELLS.items(),
+                key=lambda kv: (kv[1].discipline or "Cantrips", kv[1].section, kv[0])):
+            prefix = "⚙ " if spell_obj.engine_wired else ""
+            cb = QCheckBox(f"{prefix}{spell_name}")
+            tier_label = f"{spell_obj.discipline or 'Cantrip'} · {spell_obj.section}"
+            cost_label = f"{spell_obj.anima_cost} anima · {spell_obj.actions_required} action(s)"
+            cb.setToolTip(f"[{tier_label} | {cost_label}]\n{spell_obj.requires}\n\n{spell_obj.description}")
+            spell_layout.addWidget(cb, spell_row, 0)
+            self.spell_checks[spell_name] = cb
+            spell_row += 1
+        spell_scroll = QScrollArea()
+        spell_scroll.setWidgetResizable(True)
+        spell_inner = QWidget()
+        spell_inner.setLayout(spell_layout)
+        spell_scroll.setWidget(spell_inner)
+        spell_scroll.setMaximumHeight(180)
+        spell_outer.addWidget(spell_scroll)
+        spell_box.setLayout(spell_outer)
+
+        self.layout().addWidget(spell_box)
         self.layout().addWidget(core_box)
 
         # Connect stat changes to equipment requirement checks
@@ -513,6 +564,10 @@ class CombatantEditor(QGroupBox):
             "armor": self.armor_choice.currentText(),
             "team": self.team_choice.currentText(),
             "feats": [name for name, cb in self.feat_checks.items() if cb.isChecked()],
+            "spells": [name for name, cb in self.spell_checks.items() if cb.isChecked()],
+            "primary_discipline": (
+                "" if self.primary_discipline_choice.currentText() == "(None)"
+                else self.primary_discipline_choice.currentText()),
         }
 
     def load_template(self, data: dict) -> None:
@@ -544,6 +599,12 @@ class CombatantEditor(QGroupBox):
         feat_list = data.get("feats", [])
         for name, cb in self.feat_checks.items():
             cb.setChecked(name in feat_list)
+        # Restore spellbook
+        spell_list = data.get("spells", [])
+        for name, cb in self.spell_checks.items():
+            cb.setChecked(name in spell_list)
+        primary = data.get("primary_discipline") or "(None)"
+        self.primary_discipline_choice.setCurrentText(primary)
         self._refresh_hand_options()
 
     def _blank_template(self) -> dict:
@@ -618,14 +679,12 @@ class CombatantEditor(QGroupBox):
         hand2_name = self.hand2_choice.currentText()
         armor_name = self.armor_choice.currentText()
 
-        if hand1_name in AVALORE_WEAPONS:
-            items_to_check.append((hand1_name, AVALORE_WEAPONS[hand1_name].stat_requirements))
-        elif hand1_name in AVALORE_SHIELDS:
-            items_to_check.append((hand1_name, AVALORE_SHIELDS[hand1_name].stat_requirements))
-        if hand2_name in AVALORE_WEAPONS:
-            items_to_check.append((hand2_name, AVALORE_WEAPONS[hand2_name].stat_requirements))
-        elif hand2_name in AVALORE_SHIELDS:
-            items_to_check.append((hand2_name, AVALORE_SHIELDS[hand2_name].stat_requirements))
+        for hand_name in (hand1_name, hand2_name):
+            base_name = hand_name[len("Improvised "):] if hand_name.startswith("Improvised ") else hand_name
+            if base_name in AVALORE_WEAPONS:
+                items_to_check.append((hand_name, AVALORE_WEAPONS[base_name].stat_requirements))
+            elif base_name in AVALORE_SHIELDS:
+                items_to_check.append((hand_name, AVALORE_SHIELDS[base_name].stat_requirements))
         if armor_name != "None" and armor_name in AVALORE_ARMOR:
             items_to_check.append((armor_name, AVALORE_ARMOR[armor_name].stat_requirements))
 
@@ -2523,8 +2582,46 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Move failed", f"An error occurred while moving:\n{exc}")
 
     def cast_spell(self):
-        # Spell casting disabled in this UI for now.
-        self.action_view.setPlainText("Spell casting is currently disabled.")
+        """Cast one of Character 1's known spells at Character 2 (sandbox action)."""
+        from PySide6.QtWidgets import QInputDialog
+        try:
+            participants = [ed.to_participant() for ed in self.combatant_editors]
+            caster = participants[0]
+            if not caster.known_spells:
+                self._show_toast("Character 1 has no spells in their spellbook.", "warning")
+                return
+            choices = []
+            for name in caster.known_spells:
+                spell = AVALORE_SPELLS.get(name)
+                if spell is None:
+                    continue
+                wired = "⚙ " if spell.engine_wired else ""
+                choices.append(f"{wired}{name}  ({spell.anima_cost} anima, {spell.actions_required} act)")
+            choice, ok = QInputDialog.getItem(self, "Cast Spell", "Spell:", choices, 0, False)
+            if not ok:
+                return
+            spell_name = choice.lstrip("⚙ ").rsplit("  (", 1)[0]
+            spell = AVALORE_SPELLS[spell_name]
+
+            tactical_map = self._build_tactical_map(participants)
+            engine = AvaCombatEngine(participants, tactical_map=tactical_map)
+            self._last_engine = engine
+            engine.log = lambda msg: engine.combat_log.append(msg)  # type: ignore
+            target = caster if (spell.self_target or spell.ally_target) else participants[1]
+            result = engine.action_cast_spell(caster, spell, target)
+            if not result.get("success") and not result.get("miscast"):
+                self._show_toast("The spell could not be cast (range, actions, or anima).", "warning")
+            engine._log_map_state("After cast")
+            engine.combat_log.append(engine.get_combat_summary())
+            self._set_action_log(engine.combat_log)
+            self.map_view.setPlainText("\n".join(engine.map_log))
+            self.status_view.setHtml(self._format_status_badges(participants))
+            self._update_combat_bars(participants)
+            self._render_map_grid(engine.tactical_map)
+            self._set_decision_log()
+            self._save_settings()
+        except Exception as exc:
+            QMessageBox.critical(self, "Cast failed", f"An error occurred while casting:\n{exc}")
 
     def _on_mode_changed(self):
         # Enable controls for any player-controlled mode
@@ -2832,10 +2929,32 @@ class MainWindow(QWidget):
                     current.spend_actions(weapon.actions_required)
                     continue
                 engine.perform_attack(current, target, weapon=weapon)
+            elif action == "Cast":
+                spell = self._first_castable_spell(engine, current)
+                if spell is None:
+                    engine.combat_log.append("No castable spell in the spellbook; action skipped.")
+                    self._show_toast("No castable spell available.", "warning")
+                    continue
+                recipient = current if (spell.self_target or spell.ally_target) else target
+                engine.action_cast_spell(current, spell, recipient)
             elif action == "Evade":
                 engine.action_evade(current)
             elif action == "Block":
                 engine.action_block(current)
+
+    @staticmethod
+    def _first_castable_spell(engine: AvaCombatEngine, current: CombatParticipant):
+        """First engine-wired known spell the caster can afford and fit this turn."""
+        for name in current.known_spells:
+            spell = AVALORE_SPELLS.get(name)
+            if spell is None or not spell.engine_wired:
+                continue
+            if max(1, spell.actions_required) > current.actions_remaining:
+                continue
+            if spell.anima_cost > current.anima:
+                continue
+            return spell
+        return None
 
     # ══════════════════════════════════════════
     #  Helper Methods for Section Building
@@ -3225,8 +3344,9 @@ class MainWindow(QWidget):
         self.player_action1_combo = QComboBox()
         self.player_action2_combo = QComboBox()
         for combo in (self.player_action1_combo, self.player_action2_combo):
-            combo.addItems(["Attack", "Evade", "Block", "Skip"])
-            combo.setToolTip("Player-selected action when in player-controlled mode")
+            combo.addItems(["Attack", "Cast", "Evade", "Block", "Skip"])
+            combo.setToolTip("Player-selected action when in player-controlled mode\n"
+                             "Cast uses the first affordable engine-wired spell from the spellbook")
         player_action_row.addWidget(self.player_action1_combo)
         player_action_row.addWidget(self.player_action2_combo)
         player_content.addLayout(player_action_row)
@@ -3251,6 +3371,10 @@ class MainWindow(QWidget):
         self.move_button.clicked.connect(self.move_attacker)
         self.move_button.setToolTip("Move Character 1 to the chosen coordinates")
         move_row.addWidget(self.move_button)
+        self.cast_button = QPushButton("Cast Spell")
+        self.cast_button.clicked.connect(self.cast_spell)
+        self.cast_button.setToolTip("Cast one of Character 1's spellbook spells (sandbox)")
+        move_row.addWidget(self.cast_button)
         move_row.addStretch()
         player_content.addLayout(move_row)
 

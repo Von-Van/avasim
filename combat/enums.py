@@ -33,6 +33,8 @@ class StatusEffect(Enum):
     HIDDEN = auto()
     GRAPPLED = auto()
     BLEEDOUT = auto()
+    IMMOBILIZED = auto()   # held fast (e.g. Seize): no movement at all
+    CORRUPTED = auto()     # healing is nullified (e.g. Corrupt)
 
 MAX_WEAPONS = 2
 MAX_SMALL_FLEX = 1

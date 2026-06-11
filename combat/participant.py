@@ -70,6 +70,20 @@ class CombatParticipant:
     spell_evasion_penalty_duration: int = 0
     spell_soak_bonus: int = 0
     spell_soak_bonus_duration: int = 0
+    # Spellcasting state (canonical arcane rules).
+    primary_discipline: str = ""             # +1 to cast; miscasts cost no anima
+    known_spells: List[str] = field(default_factory=list)
+    check_penalties: Dict[str, int] = field(default_factory=dict)  # "Stat" / "Stat:Skill" -> penalty (overcast consequences)
+    # Wired spell-effect state.
+    active_dots: List[Dict[str, Any]] = field(default_factory=list)
+    buffer_charges: int = 0                  # Buffer: next hit may become a graze
+    barbs_charges: int = 0                   # Barbs: retaliation instances left
+    kinetic_spike_ready: bool = False        # next successful attack +2 dmg + knockback
+    duplicate_images: int = 0                # Eidetic Echo decoys
+    ap_ward_rounds: int = 0                  # Fortify: immune to armor piercing
+    bonus_actions_next_turn: int = 0         # Acceleration
+    bonus_move_next_turn: int = 0
+    bonus_move_this_turn: int = 0
     parry_bonus_next_turn: bool = False
     parry_damage_bonus_active: bool = False
     control_wall_bonus_targets: Set[Any] = field(default_factory=set)
@@ -91,6 +105,7 @@ class CombatParticipant:
     martial_discipline_stacks: int = 0       # active +aim to Arming Sword this turn
     martial_discipline_next: int = 0         # stacks earned from blocks this turn
     rage_active: bool = False
+    rage_stats_applied: bool = False         # STR/DEX +1, INT/HAR -1 while raging
     unyielding_reflex_used_round: bool = False
     wounded_animal_used_scene: bool = False
     has_taken_turn: bool = False
@@ -218,6 +233,7 @@ class CombatParticipant:
             self.actions_remaining = 0
             self.limited_action_used = False
             self.has_taken_turn = True
+            self.free_move_used = False  # the dying may crawl at half movement
             # Turn-start hooks first (e.g. Wounded Animal self-stabilizes) so a
             # mutant can halt their own countdown before it is decremented.
             engine = getattr(self, 'engine', None)
@@ -228,8 +244,11 @@ class CombatParticipant:
                 if self.bleedout_turns_remaining <= 0:
                     self.is_dead = True
             return
-        # Default actions
-        self.actions_remaining = self.actions_per_turn
+        # Default actions (+1 while hasted by Acceleration)
+        self.actions_remaining = self.actions_per_turn + self.bonus_actions_next_turn
+        self.bonus_actions_next_turn = 0
+        self.bonus_move_this_turn = self.bonus_move_next_turn
+        self.bonus_move_next_turn = 0
         self.limited_action_used = False
         self.has_taken_turn = True
         self.unyielding_reflex_used_round = False
@@ -297,10 +316,34 @@ class CombatParticipant:
                 self.status_durations[status] = new_val
         for status in expired:
             self.status_effects.discard(status)
+        if self.ap_ward_rounds > 0:
+            self.ap_ward_rounds -= 1
+        self._tick_damage_over_time()
+        # Rage burns its host: 1 damage each turn while active.
+        if self.rage_active and not self.is_dead:
+            taken = self.take_damage(1, armor_piercing=True)
+            engine = getattr(self, 'engine', None)
+            if engine:
+                engine.log(f"{self.character.name}'s Rage burns: {taken} self-damage.")
         # Dispatch turn-start feat hooks (First Strike 3 actions, etc.)
         engine = getattr(self, 'engine', None)
         if engine:
             FEAT_REGISTRY.dispatch_on_turn_start(engine, self)
+
+    def _tick_damage_over_time(self):
+        """Apply lingering spell damage (burning, blood loss) at turn start."""
+        engine = getattr(self, 'engine', None)
+        for dot in list(self.active_dots):
+            taken = self.take_damage(dot["damage"], armor_piercing=dot.get("ap", True))
+            if engine:
+                engine.log(
+                    f"{self.character.name} takes {taken} {dot.get('type', 'arcane')} damage "
+                    f"from {dot['name']} ({dot['rounds'] - 1} rounds remain)."
+                )
+            dot["rounds"] -= 1
+            dot["damage"] += dot.get("escalation", 0)
+            if dot["rounds"] <= 0 or self.is_dead:
+                self.active_dots.remove(dot)
 
     def spend_actions(self, amount: int) -> bool:
         if self.actions_remaining < amount:
@@ -315,6 +358,32 @@ class CombatParticipant:
         self.weapon_main, self.weapon_offhand = self.weapon_offhand, self.weapon_main
         self.swap_used_turn = True
         return True
+
+    def check_penalty(self, stat: str, skill: str = "") -> int:
+        """Lingering penalty to a stat/skill check (overcast consequences)."""
+        penalty = self.check_penalties.get(stat, 0)
+        if skill:
+            penalty += self.check_penalties.get(f"{stat}:{skill}", 0)
+        return penalty
+
+    # Rage shifts STR & DEX +1 and INT & HAR -1 (applied after other
+    # modifiers, so directly on the base stats) until the Rage subsides.
+    RAGE_STAT_SHIFTS = (("Strength", 1), ("Dexterity", 1), ("Intelligence", -1), ("Harmony", -1))
+
+    def apply_rage_stat_shifts(self):
+        if self.rage_stats_applied:
+            return
+        for stat, delta in self.RAGE_STAT_SHIFTS:
+            self.character.base_stats[stat] = self.character.base_stats.get(stat, 0) + delta
+        self.rage_stats_applied = True
+
+    def end_rage(self):
+        """End the Rage and revert its stat shifts (e.g. on entering Critical)."""
+        if self.rage_stats_applied:
+            for stat, delta in self.RAGE_STAT_SHIFTS:
+                self.character.base_stats[stat] = self.character.base_stats.get(stat, 0) - delta
+            self.rage_stats_applied = False
+        self.rage_active = False
 
     def apply_status(self, status: StatusEffect):
         self.status_effects.add(status)
@@ -410,6 +479,9 @@ class CombatParticipant:
         self.last_death_save_triggered = False
         if amount <= 0:
             return 0
+        # Fortify: the armour is sealed against armor-piercing effects.
+        if armor_piercing and self.ap_ward_rounds > 0:
+            armor_piercing = False
         # Apply armor soak unless AP
         if not armor_piercing and self.armor:
             meets_req = self.armor.meets_requirements(self.character)
@@ -446,6 +518,12 @@ class CombatParticipant:
             else:
                 # First time at 0 HP: become Critical
                 self.is_critical = True
+                if self.rage_active:
+                    # The Rage ends immediately on entering Critical.
+                    self.end_rage()
+                    engine = getattr(self, 'engine', None)
+                    if engine:
+                        engine.log(f"{self.character.name}'s Rage ends as they fall Critical.")
         return amount
 
     def resolve_death_save(self):
@@ -482,6 +560,12 @@ class CombatParticipant:
         self.actions_remaining = 0
 
     def heal(self, amount: int):
+        # Corrupt: the body's own mending is turned against it.
+        if self.has_status(StatusEffect.CORRUPTED):
+            engine = getattr(self, 'engine', None)
+            if engine:
+                engine.log(f"{self.character.name} is Corrupted - the healing has no effect!")
+            return
         self.current_hp = min(self.max_hp, self.current_hp + amount)
         if self.current_hp > 0:
             # Healing for any amount lifts Critical and Bleedout (per the rules).

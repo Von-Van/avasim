@@ -43,6 +43,7 @@ class CharacterBuild:
     armor: str = "None"
     feats: List[str] = field(default_factory=list)
     spells: List[str] = field(default_factory=list)
+    primary_discipline: str = ""
     team: str = ""
     creature_type: str = "Unknown"
     lineage_weapon: Optional[str] = None
@@ -108,6 +109,7 @@ class CharacterBuild:
             armor=str(armor),
             feats=[str(name) for name in data.get("feats", [])],
             spells=[str(name) for name in data.get("spells", [])],
+            primary_discipline=str(data.get("primary_discipline", "")),
             team=team,
             creature_type=str(data.get("creature_type", "Unknown")),
             lineage_weapon=data.get("lineage_weapon", lineage.get("weapon")),

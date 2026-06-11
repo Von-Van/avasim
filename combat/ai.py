@@ -145,6 +145,10 @@ class CombatAI:
         if self._try_pre_attack_feats(engine, current, target, weapon):
             return
 
+        # --- Spellcasting phase (heal, buff, or outdamage the weapon) ---
+        if self._try_spellcasting(engine, current, target, weapon):
+            return
+
         # --- Defensive phase (low HP) ---
         if self._try_defensive_feats(engine, current, target, weapon):
             return
@@ -272,6 +276,101 @@ class CombatAI:
                     if res.get("used") and res.get("granted"):
                         return True
 
+        return False
+
+    # ------------------------------------------------------------------
+    # Spellcasting logic
+    # ------------------------------------------------------------------
+
+    def _castable_spells(self, current: CombatParticipant) -> List[Any]:
+        """Known, engine-wired spells the caster can afford right now (never
+        auto-overcasts)."""
+        from .spells import AVALORE_SPELLS
+        castable = []
+        for name in current.known_spells:
+            spell = AVALORE_SPELLS.get(name)
+            if spell is None or not spell.engine_wired:
+                continue
+            if max(1, spell.actions_required) > current.actions_remaining:
+                continue
+            if spell.anima_cost > current.anima:
+                continue
+            castable.append(spell)
+        return castable
+
+    def _try_spellcasting(self, engine: AvaCombatEngine,
+                          current: CombatParticipant,
+                          target: CombatParticipant,
+                          weapon: Weapon) -> bool:
+        """Cast at most one spell per phase. Returns True if the turn is spent."""
+        castable = self._castable_spells(current)
+        if not castable:
+            return False
+        arcana = current.character.get_modifier("Harmony", "Arcana")
+        p_cast = self.prob_2d10_at_least(10 - arcana)
+
+        # 1) Emergency support: stabilize/heal a downed or critical ally.
+        heal_spells = [s for s in castable if s.ally_target
+                       and (s.healing or s.healing_dice_count
+                            or any(e.status == "stabilize" for e in s.effects))]
+        if heal_spells:
+            allies = [p for p in engine.participants
+                      if p is not current and not p.is_dead
+                      and self._is_ally(engine, current, p)
+                      and (p.in_bleedout or p.is_critical or p.current_hp <= p.max_hp // 3)]
+            allies.sort(key=lambda p: (not p.in_bleedout, not p.is_critical, p.current_hp))
+            for ally in allies:
+                dist = engine.get_distance(current, ally) if engine.tactical_map else 1
+                for spell in heal_spells:
+                    if dist <= engine.SPELL_RANGE_MAX[spell.range_category]:
+                        self._log(engine, f"Spell hook: {spell.name} on {ally.character.name} (ally down/low).")
+                        engine.action_cast_spell(current, spell, ally)
+                        return current.actions_remaining <= 0
+
+        # 2) Defensive self-buff when pressured.
+        hp_ratio = current.current_hp / max(1, current.max_hp)
+        if hp_ratio < self.config["defend_hp_threshold"]:
+            buff_names = {"Blur", "Buffer", "Barbs", "Eidetic Echo", "Fortify"}
+            already_warded = (current.buffer_charges or current.barbs_charges
+                              or current.duplicate_images or current.spell_evasion_bonus
+                              or current.ap_ward_rounds)
+            if not already_warded:
+                for spell in castable:
+                    if spell.name in buff_names:
+                        self._log(engine, f"Spell hook: {spell.name} (defensive ward at {hp_ratio:.0%} HP).")
+                        engine.action_cast_spell(current, spell, current if spell.ally_target else None)
+                        return current.actions_remaining <= 0
+
+        # 3) Offense: cast when expected damage beats the weapon swing.
+        weapon_ev = self.expected_attack_value(current, target, weapon)
+        dist = engine.get_distance(current, target) if engine.tactical_map else 1
+        best = None
+        best_ev = weapon_ev
+        for spell in castable:
+            if spell.ally_target or spell.self_target or (spell.damage <= 0 and not spell.effects):
+                continue
+            if spell.damage <= 0:
+                continue
+            if dist > engine.SPELL_RANGE_MAX[spell.range_category]:
+                continue
+            effective = float(spell.damage)
+            for effect in spell.effects:
+                if effect.status == "dot":
+                    rounds = effect.dot_rounds
+                    effective += (effect.dot_damage + effect.dot_damage
+                                  + effect.dot_escalation * max(0, rounds - 1)) * rounds / 2.0
+            if spell.save_stat:
+                effective *= 0.7 if spell.half_damage_on_save else 0.45
+            if not spell.armor_piercing:
+                effective -= self.expected_soak(target)
+            spell_ev = p_cast * max(0.0, effective) / max(1, spell.actions_required)
+            if spell_ev > best_ev:
+                best_ev = spell_ev
+                best = spell
+        if best is not None:
+            self._log(engine, f"Spell hook: {best.name} (EV {best_ev:.1f} > weapon EV {weapon_ev:.1f}).")
+            engine.action_cast_spell(current, best, target)
+            return current.actions_remaining <= 0
         return False
 
     # ------------------------------------------------------------------

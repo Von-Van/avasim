@@ -10,9 +10,17 @@ from avasim import Character
 from .contracts import CharacterBuild, ScenarioConfig
 from .enums import TerrainType
 from .feats import AVALORE_FEATS
-from .items import AVALORE_ARMOR, AVALORE_SHIELDS, AVALORE_WEAPONS
+from .enums import RangeCategory
+from .items import (
+    AVALORE_ARMOR,
+    AVALORE_SHIELDS,
+    AVALORE_WEAPONS,
+    make_improvised_shield,
+    make_improvised_weapon,
+)
 from .map import TacticalMap
 from .participant import CombatParticipant
+from .spells import AVALORE_SPELLS
 
 
 def build_to_participant(build: CharacterBuild | dict) -> CombatParticipant:
@@ -38,8 +46,13 @@ def build_to_participant(build: CharacterBuild | dict) -> CombatParticipant:
             return
         if weapon_main and weapon_main.is_two_handed:
             return
-        if selection in AVALORE_WEAPONS:
-            weapon = copy.deepcopy(AVALORE_WEAPONS[selection])
+        improvised = selection.startswith("Improvised ")
+        base_name = selection[len("Improvised "):] if improvised else selection
+        if base_name in AVALORE_WEAPONS:
+            base = AVALORE_WEAPONS[base_name]
+            if improvised and base.range_category == RangeCategory.RANGED:
+                return  # ranged templates cannot be improvised (validation flags this)
+            weapon = make_improvised_weapon(base) if improvised else copy.deepcopy(base)
             if weapon.is_two_handed:
                 weapon_main = weapon
                 weapon_offhand = None
@@ -48,8 +61,9 @@ def build_to_participant(build: CharacterBuild | dict) -> CombatParticipant:
                 weapon_main = weapon
             elif weapon_offhand is None:
                 weapon_offhand = weapon
-        elif selection in AVALORE_SHIELDS and shield is None:
-            shield = copy.deepcopy(AVALORE_SHIELDS[selection])
+        elif base_name in AVALORE_SHIELDS and shield is None:
+            base_shield = AVALORE_SHIELDS[base_name]
+            shield = make_improvised_shield(base_shield) if improvised else copy.deepcopy(base_shield)
 
     assign_hand(build.hand1)
     assign_hand(build.hand2)
@@ -65,6 +79,8 @@ def build_to_participant(build: CharacterBuild | dict) -> CombatParticipant:
         armor=copy.deepcopy(AVALORE_ARMOR.get(build.armor)) if build.armor != "None" else None,
         shield=shield,
         feats=[copy.deepcopy(AVALORE_FEATS[name]) for name in build.feats if name in AVALORE_FEATS],
+        known_spells=[name for name in build.spells if name in AVALORE_SPELLS],
+        primary_discipline=build.primary_discipline,
         team=build.team,
         creature_type=build.creature_type,
         lineage_weapon=build.lineage_weapon,

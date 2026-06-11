@@ -21,9 +21,10 @@ Note: These images are placeholders for the portfolio landing page. Replace them
 **Key Features**
 
 - Full Avalore action economy with a unified "one Limited action per turn" budget shared by feats and maneuvers
-- All **100 feats** from [avalore.net/feats](https://avalore.net/feats) cataloged (59 engine-wired); weapon, armor, and shield resolution
-- Maneuvers (Grapple, Disarm, Struggle, Shove, Topple, Pull) and the Prone/Grappled conditions
-- Critical → Death Save → Bleedout chain with stabilization, plus stealth Sneak Attacks
+- All **100 feats** from [avalore.net/feats](https://avalore.net/feats) cataloged (59 engine-wired); weapon, armor, shield, and improvised-equipment resolution
+- All **217 Grimoire spells** from [avalore.net/grimoire](https://avalore.net/grimoire) cataloged (30 combat-wired) with canonical casting: DC 10, anima pools, free critical casts, primary-discipline bonuses, overcast consequences, and the magic-wheel learning restriction
+- Maneuvers (Grapple, Disarm, Struggle, Shove, Topple, Pull) and the Prone/Grappled/Immobilized conditions, including the per-grappler aim bonus
+- Critical → Death Save → Bleedout chain with stabilization and half-movement crawl, plus stealth Sneak Attacks
 - Tactical grid map with terrain, movement penalties, and range overlays
 - Scenario builder for placing terrain and units with save/load
 - Decision math drawer with EV logging and action traceability
@@ -56,7 +57,7 @@ make benchmark-analysis
 - `combat/items.py`: weapons, armor, shields, traits
 - `combat/feats.py`: all 100 feat definitions (source of truth; exported to `data/avalore/v1/feats.json`)
 - `combat/feat_handlers.py`: typed feat-effect handlers dispatched by the engine
-- `combat/spells.py`: spell definitions and casting mechanics
+- `combat/spells.py`: all 217 Grimoire spells with the combat-mechanics overlay (source of truth; exported to `data/avalore/v1/spells.json`)
 - `ui/`: Qt widgets and tactical map rendering
 - `pyside_app.py`: desktop application entry point and UI wiring
 
@@ -64,7 +65,7 @@ make benchmark-analysis
 
 - The PySide desktop app and Python combat engine are canonical.
 - The TypeScript orchestrator, Rust service, Docker stack, and schema package are frozen experimental reference work until the Python runtime contract is stable.
-- Spellcasting is implemented in the engine, but the UI currently keeps spellcasting disabled.
+- Spellcasting is fully enabled: the character editor has a spellbook (with primary discipline), the AI casts when a spell beats a weapon swing, and manual turns support Cast actions.
 - The focus is on reproducible analysis, rules fidelity, combat visualization, and AI transparency.
 
 **Packaging**
@@ -77,7 +78,10 @@ Rules references and design notes live in `docs/`:
 
 - [`docs/mechanics_reference.md`](docs/mechanics_reference.md) — canonical combat mechanics and an implementation-coverage matrix
 - [`docs/feats_catalog.md`](docs/feats_catalog.md) — all 100 feats by category with effect text and engine-wired status
+- [`docs/spells_catalog.md`](docs/spells_catalog.md) — all 217 Grimoire spells by discipline and tier with engine-wired status
 - [`docs/analysis_core.md`](docs/analysis_core.md) — the current canonical analysis direction
 
-The feat catalog is the data in `combat/feats.py` (exported to `data/avalore/v1/feats.json`); refresh the
-scraped source of truth with `python scripts/fetch_feats.py`.
+The feat and spell catalogs are the data in `combat/feats.py` / `combat/spells.py` (exported to
+`data/avalore/v1/`); refresh the scraped sources of truth with `python scripts/fetch_feats.py` and
+`python scripts/fetch_spells.py`, and regenerate the spell document with
+`python scripts/generate_spells_doc.py`.

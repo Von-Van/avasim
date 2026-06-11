@@ -6,6 +6,8 @@ models, and tracks how faithfully each is implemented. Sources:
 - Core mechanics — <https://avalore.net/mechanics>
 - Extended mechanics — <https://avalore.net/extended-mechanics>
 - Feats — <https://avalore.net/feats> (see [feats_catalog.md](feats_catalog.md))
+- Arcane & Grimoire — <https://avalore.net/arcane>, <https://avalore.net/grimoire>
+  (see [spells_catalog.md](spells_catalog.md))
 
 Status key: ✅ implemented · ◑ partial / simplified · ⛔ not modelled (optional).
 
@@ -44,7 +46,8 @@ Status key: ✅ implemented · ◑ partial / simplified · ⛔ not modelled (opt
 | Critical = unblockable/unevadable, AP (+2 if AP) | ✅ | `engine.perform_attack` |
 | Block, +1 vs ranged | ✅ | `items.Shield.roll_block` |
 | Non-proficiency −2, cover, line-of-sight | ✅ | `participant.get_weapon_penalty`, `engine` |
-| Improvised weapons (−1 aim / −1 dmg) | ⛔ | not modelled (optional) |
+| Improvised weapons (−1 aim / −1 dmg; no feat synergy except Rage) | ✅ | `items.make_improvised_weapon`, `engine.perform_attack` |
+| Improvised shields (−1 block; no shield-feat synergy except Rage) | ✅ | `items.make_improvised_shield` |
 
 ## Maneuvers & conditions (extended)
 
@@ -61,7 +64,7 @@ followed by a skill contest. See `_resolve_*`/`_maneuver_*` helpers and the
 | Disarm | ✅ | while grappling; drops weapon, ends grapple |
 | Struggle | ✅ | break free; Death-Save exempt |
 | **Prone** condition | ✅ | +1 to hit it, no move, no reactions; ends grapples |
-| **Grappled** condition | ◑ | −3 to physical rolls, movement 0 (multi-grappler aim bonus not modelled) |
+| **Grappled** condition | ✅ | −3 to physical rolls, movement 0; melee attacks vs the target gain +1 aim per grappler |
 
 ## Stealth (extended)
 
@@ -88,7 +91,7 @@ followed by a skill contest. See `_resolve_*`/`_maneuver_*` helpers and the
 | Bleedout chain + HAR:Belief countdown | ✅ | `participant._enter_bleedout`, `start_turn` |
 | Stabilize (2 actions, INT:Healing, Melee) | ✅ | `engine.action_stabilize` |
 | Crit success exits Critical (+1 HP) | ✅ | `participant.resolve_death_save` |
-| Bleedout half-movement crawl | ◑ | bleeding-out combatants are treated as incapacitated |
+| Bleedout half-movement crawl | ✅ | no actions, but `engine.action_move` allows crawling at half movement |
 
 ## Environmental (extended, opt-in)
 
@@ -101,19 +104,64 @@ today (`engine.environment_darkness`); the rest are intentionally out of scope.
 | Darkness perception penalty | ◑ |
 | Terrain / water / hazards (fall, fire, poison) | ⛔ (optional) |
 
-## Spellcasting
+## Spellcasting (arcane)
 
-`engine.perform_cast_spell` exists and consumes actions through the same economy,
-so Cast is subject to the action budget and condition modifiers. Full spell
-mechanics are a planned extension.
+All 217 Grimoire spells are cataloged ([spells_catalog.md](spells_catalog.md));
+30 combat-decisive spells are engine-wired via `SPELL_MECHANICS` in
+[`combat/spells.py`](../combat/spells.py). The casting procedure follows
+<https://avalore.net/arcane>:
+
+- **Cantrips** succeed automatically — no roll, no anima.
+- **Casting roll:** 2d10 + HAR:Arcana vs **DC 10** (`engine.perform_cast_spell`).
+- **Critical cast (10,10):** succeeds and consumes **no anima** (and skips the
+  overcast consequence).
+- **Miscast (< 10):** the spell fails and **half** the anima cost is lost;
+  casting in the **primary discipline** loses no anima.
+- **Primary discipline:** +1 to its casting rolls; the **opposite** discipline
+  on the magic wheel cannot be learned (Ichor↔Artifice, Tellurgy↔Ether,
+  Cursesmithy↔Force) — enforced by `validate_build`.
+- **Overcasting:** once per day, only if the cost fits the maximum pool. On a
+  success, roll the canonical 1d6 consequence (scarring / Prone / −3
+  INT:Perception / −1 STR rolls / −1 INT:Perception / numb hands); on a
+  miscast the caster falls unconscious with 0 anima.
+- **Mage levels:** anima pools 8/14/20/30 with 6/10/14/20 learned spells
+  (validation warns when exceeded).
+- **Action economy:** `engine.action_cast_spell` consumes the listed casting
+  actions; Cast is not Death-Save exempt; multi-action rituals that exceed the
+  per-turn budget cannot be cast in combat.
+- Defensive interaction: spells flagged evadable/blockable resolve Evade/Block
+  **against the casting roll** (e.g. Kinetic Array, Geokinesis, Pyrebolt).
+
+| Rule | Status | Where |
+|------|:------:|-------|
+| DC 10 casting roll, cantrip auto-success | ✅ | `engine.perform_cast_spell` |
+| Crit cast free; primary +1 and free miscast | ✅ | `engine.perform_cast_spell` |
+| Overcast gate, 1d6 consequence table, unconscious on miscast | ✅ | `engine._apply_overcast_consequence` |
+| Magic-wheel learning restriction, mage tiers | ✅ | `validation._validate_arcana` |
+| Saves, AoE radius/target caps, damage-over-time, wards | ✅ | `engine._apply_spell_effects`, `participant._tick_damage_over_time` |
+| Cooperative casting (4+ action rituals split between mages) | ⛔ | out-of-combat ritual support |
 
 ## Documented simplifications
 
-- **Grappled:** the per-extra-grappler aim bonus is not modelled.
-- **Bleedout:** modelled as full incapacitation (no half-move crawl).
-- **Rage:** +1 damage and prone-on-enter are modelled; the ±1 stat shifts and
-  1/turn self-damage are not.
-- **LW: Skewer:** the −1-damage-per-extra-target falloff is not applied.
+- **Spell line AoEs** (Geokinesis, Atmokinesis): the 1×8 line is resolved
+  against a single target; alternate elemental modes are not modelled.
+- **Detain:** wired as the one-action kneel (Slowed); the two-action straight-
+  to-Prone variant is not modelled.
+- **Shell:** armour-rank-up is approximated as +1 soak for 5 rounds.
+- **Blur / Obscura / Intrusion:** scene-length or re-save effects use fixed
+  round counts and a single initial save.
+- **Pierce Penumbra / Shriek / Nebula:** caster-centred areas are resolved
+  around the chosen target point.
+- **Burning (Atmokinesis, Pyrebolt):** the spend-an-action-to-extinguish
+  option is not modelled; the burn runs its listed duration.
+- **LW: Skewer:** the −1 falloff is applied per additional enemy **in the
+  line** (canon counts enemies actually hit), so it matches canon exactly when
+  every target is hit and is slightly conservative otherwise.
+- **Overcast consequences:** hour/day-scale penalties persist for the rest of
+  the combat; the −3/−1 perception and −1 STR penalties apply to perception
+  contests, maneuver contests, and saves (not weapon aim).
 - **Pounce:** vertical (5-block fall → Prone) is not modelled on the 2-D map.
 - A number of Mutant/Vampiric and all Utility/Background feats are out-of-combat
-  and are cataloged-only — see [feats_catalog.md](feats_catalog.md).
+  and are cataloged-only — see [feats_catalog.md](feats_catalog.md); likewise
+  187 of 217 Grimoire spells are cataloged-only — see
+  [spells_catalog.md](spells_catalog.md).

@@ -20,6 +20,7 @@ class Weapon:
     load_time: int = 0
     draw_time: int = 0
     traits: List[str] = field(default_factory=list)
+    improvised: bool = False
     description: str = ""
 
     def meets_requirements(self, character) -> bool:
@@ -87,6 +88,7 @@ class Shield:
     grants_ap_immunity: bool = False
     ranged_bonus: int = 1
     stat_requirements: Dict[str, int] = field(default_factory=dict)
+    improvised: bool = False
     description: str = ""
 
     def get_block_dc(self) -> int:
@@ -138,6 +140,32 @@ AVALORE_WEAPONS: Dict[str, Weapon] = {
     "Longbow": Weapon(name="Longbow", damage=6, accuracy_bonus=3, actions_required=2, range_category=RangeCategory.RANGED, is_two_handed=True, draw_time=1, stat_requirements={"Dexterity:Acrobatics": 1, "Strength:Athletics": 1}, usable_underwater=False, description="A powerful longbow. +3 to hit, 6 damage, 2 actions (nock & loose). Cannot be used in heavy armor or underwater."),
     "Spellbook": Weapon(name="Spellbook", damage=4, accuracy_bonus=3, actions_required=2, range_category=RangeCategory.RANGED, is_two_handed=True, armor_piercing=True, stat_requirements={"Harmony:Arcana": 2}, traits=["piercing"], usable_underwater=True, description="Arcane tome for casting. +3 to hit, 4 damage, 2 actions (chant & cast), pierces armor, works underwater."),
 }
+
+def make_improvised_weapon(base: Weapon) -> Weapon:
+    """Improvised weapon rule (avalore.net/mechanics): any non-ranged template
+    can be improvised at -1 aim and -1 damage; it keeps the template's other
+    properties but does not synergize with feats other than Rage."""
+    import copy
+    if base.range_category == RangeCategory.RANGED:
+        raise ValueError("Ranged weapon templates cannot be improvised.")
+    weapon = copy.deepcopy(base)
+    weapon.name = f"Improvised {base.name}"
+    weapon.accuracy_bonus -= 1
+    weapon.damage = max(0, base.damage - 1)
+    weapon.improvised = True
+    return weapon
+
+
+def make_improvised_shield(base: Shield) -> Shield:
+    """Improvised shield rule: block rolls take an extra -1 and shield feats
+    (other than Rage) do not apply."""
+    import copy
+    shield = copy.deepcopy(base)
+    shield.name = f"Improvised {base.name}"
+    shield.block_modifier -= 1
+    shield.improvised = True
+    return shield
+
 
 AVALORE_ARMOR = {
     "Light Armor": Armor(name="Light Armor", category=ArmorCategory.LIGHT, evasion_penalty=0, stealth_penalty=0, movement_penalty=0, stat_requirements={"Dexterity:Acrobatics": -1}, description="Leather or padded armor. 1d2-1 protection (0-1 soak), no penalties."),
