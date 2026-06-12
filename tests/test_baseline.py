@@ -32,7 +32,7 @@ class BaselineRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Load all fixture files once."""
-        cls.fixtures_dir = Path(__file__).parent / "tests" / "fixtures"
+        cls.fixtures_dir = Path(__file__).parent / "fixtures"
         cls.fixtures = {}
 
         for fixture_file in sorted(cls.fixtures_dir.glob("*.json")):

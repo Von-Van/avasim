@@ -4,9 +4,11 @@
 
 # AvaSim - Avalore Combat Simulator
 
-A desktop combat sandbox for the Avalore tabletop RPG. Build combatants, run AI or manual turns, and inspect detailed decision math on a tactical grid.
+A desktop combat sandbox for the [Avalore](https://avalore.net) tabletop RPG. Build combatants, run AI or manual turns, and inspect detailed decision math on a tactical grid.
 
-**Jump to:** [Screenshots](#screenshots) · [Key Features](#key-features) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Project Status](#project-status)
+An unofficial fan project — all rules and lore belong to the Avalore team and community (see [CREDITS.md](CREDITS.md)).
+
+**Jump to:** [Screenshots](#screenshots) · [Key Features](#key-features) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Project Status](#project-status) · [Credits](CREDITS.md)
 
 **Screenshots**
 
@@ -64,7 +66,7 @@ make benchmark-analysis
 **Project Status**
 
 - The PySide desktop app and Python combat engine are canonical.
-- The TypeScript orchestrator, Rust service, Docker stack, and schema package are frozen experimental reference work until the Python runtime contract is stable.
+- The earlier multi-service experiment (TypeScript orchestrator, Rust service, Docker stack, schema package) is frozen reference work consolidated under [`archive/`](archive/README.md).
 - Spellcasting is fully enabled: the character editor has a spellbook (with primary discipline), the AI casts when a spell beats a weapon swing, and manual turns support Cast actions.
 - The focus is on reproducible analysis, rules fidelity, combat visualization, and AI transparency.
 
@@ -94,3 +96,9 @@ The feat and spell catalogs are the data in `combat/feats.py` / `combat/spells.p
 `data/avalore/v1/`); refresh the scraped sources of truth with `python scripts/fetch_feats.py` and
 `python scripts/fetch_spells.py`, and regenerate the spell document with
 `python scripts/generate_spells_doc.py`.
+
+**Credits**
+
+All rules and mechanics come from [avalore.net](https://avalore.net) — the mechanics pages, the
+Arcane system and Grimoire, and the world Compendium. See [CREDITS.md](CREDITS.md) for the full
+source-by-source attribution.

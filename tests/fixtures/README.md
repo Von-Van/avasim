@@ -11,7 +11,7 @@ Each `.json` file represents a combat scenario with:
 
 ## How are they used?
 
-The test suite in `test_baseline.py` loads these fixtures and re-runs the scenarios with the same seed, then asserts that outputs match exactly. If a test fails, the engine behavior has changed.
+The test suite in `tests/test_baseline.py` loads these fixtures and re-runs the scenarios with the same seed, then asserts that outputs match exactly. If a test fails, the engine behavior has changed.
 
 ## Fixture Coverage
 

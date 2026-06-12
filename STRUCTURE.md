@@ -25,20 +25,17 @@ avasim/
 │   └── catalog.py           # Versioned JSON catalog loader
 │
 ├── data/avalore/v1/         # Versioned JSON rule catalogs (generated)
-├── docs/                    # Rules references, coverage matrix, catalogs
+├── docs/                    # Coverage matrix, catalogs, analysis contract, screenshots
 ├── scripts/                 # Scrapers, exporters, benchmarks, doc generators
-├── tests/data/              # Scraped source-of-truth fixtures (feats, spells)
+├── tests/                   # Test suite (197 tests), scraped fixtures, baselines
 ├── ui/                      # PySide6 widgets, theming, tactical map rendering
 ├── packaging/               # PyInstaller spec + version metadata
-│
-├── apps/, services/,        # FROZEN experimental next-gen reference
-│   packages/, infra/        # (TS orchestrator, Rust engine, schema, Docker)
+├── archive/                 # FROZEN next-gen experiment (TS/Rust/Docker/schema)
 │
 ├── avasim.py                # Character model (stats, skills, XP)
-├── character.py             # Character sheet template structure
 ├── pyside_app.py            # Desktop application entry point
 ├── examples.py              # Character simulator usage examples
-├── test_*.py                # Test suite (197 tests)
+├── CREDITS.md               # Avalore source attribution
 └── requirements.txt         # Python dependencies
 ```
 
@@ -62,13 +59,13 @@ avasim/
    /arcane, /grimoire, /feats)
 2. Implement in `combat/engine.py` / `combat/participant.py`
 3. Update the coverage matrix in `docs/mechanics_reference.md`
-4. Add tests (`test_combat.py`, `test_spellcasting.py`, `test_rules_fidelity.py`)
+4. Add tests (`tests/test_combat.py`, `tests/test_spellcasting.py`, `tests/test_rules_fidelity.py`)
 
 ### New wired spell
 1. Add a `SPELL_MECHANICS` entry in `combat/spells.py` (note simplifications)
 2. Extend `engine._apply_spell_effects` only if new vocabulary is needed
 3. Re-run `scripts/export_rule_catalogs.py` and `scripts/generate_spells_doc.py`
-4. Add tests to `test_spellcasting.py`
+4. Add tests to `tests/test_spellcasting.py`
 
 ### New UI component
 1. Add to `ui/components.py`, export in `ui/__init__.py`

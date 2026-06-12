@@ -5,8 +5,8 @@ from pathlib import Path
 from combat import AVALORE_ARMOR, AVALORE_FEATS, AVALORE_SHIELDS, AVALORE_SPELLS, AVALORE_WEAPONS
 from combat.catalog import CATALOG_VERSION, load_catalog
 
-FEATS_SOURCE = Path(__file__).parent / "tests" / "data" / "avalore_feats_source.json"
-SPELLS_SOURCE = Path(__file__).parent / "tests" / "data" / "avalore_spells_source.json"
+FEATS_SOURCE = Path(__file__).parent / "data" / "avalore_feats_source.json"
+SPELLS_SOURCE = Path(__file__).parent / "data" / "avalore_spells_source.json"
 
 
 class TestRuleCatalogs(unittest.TestCase):

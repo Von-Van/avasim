@@ -12,7 +12,7 @@ The analysis core adds a stable boundary for reproducible decision support witho
 
 Batch runs use summary capture by default to avoid replay/log overhead. Representative replay seeds are selected deterministically and rerun with replay capture when requested.
 
-The current service, TypeScript schema, Rust runtime, and container work remain frozen experimental reference material. They should not receive new feature work until this Python runtime contract is stable and test-backed.
+The earlier service, TypeScript schema, Rust runtime, and container work remain frozen experimental reference material, consolidated under `archive/`. They should not receive new feature work until this Python runtime contract is stable and test-backed.
 
 Static weapons, armor, shields, feats, and spells are exported to versioned JSON under `data/avalore/v1/`. The Python modules still expose the same constants (`AVALORE_WEAPONS`, `AVALORE_FEATS`, etc.), now loaded back into the existing dataclasses for compatibility.
 
@@ -26,7 +26,7 @@ Static weapons, armor, shields, feats, and spells are exported to versioned JSON
 ## Useful Commands
 
 ```bash
-python3 -m unittest discover -s . -p 'test_*.py' -v
+python3 -m unittest -v
 python scripts/benchmark_analysis.py --runs 1000
 python scripts/export_rule_catalogs.py
 make benchmark-analysis
