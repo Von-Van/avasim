@@ -131,8 +131,8 @@ class StatusBadge(QLabel):
 
 class TextHighlighter:
     """Utility for syntax highlighting in log displays."""
-    
-    # Color codes for different log message types
+
+    # Color codes for different log message types (light backgrounds)
     COLORS = {
         "critical": "#b22222",      # Red
         "hit": "#d2691e",           # Orange
@@ -142,38 +142,50 @@ class TextHighlighter:
         "status": "#e76f51",        # Orange/brown
         "default": "#222222",       # Dark gray
     }
-    
+
+    # Brighter variants that stay readable on dark parchment/obsidian panels
+    COLORS_DARK = {
+        "critical": "#ff6b5e",      # Bright red
+        "hit": "#f4a261",           # Amber
+        "miss": "#9a9a9a",          # Light gray
+        "move": "#6fb3e6",          # Sky blue
+        "skill": "#52c7b8",         # Bright teal
+        "status": "#f08a6a",        # Salmon
+        "default": "#d8d2c4",       # Parchment
+    }
+
     @staticmethod
-    def get_color_for_line(line: str) -> str:
+    def get_color_for_line(line: str, dark: bool = False) -> str:
         """Determine text color based on content."""
+        palette = TextHighlighter.COLORS_DARK if dark else TextHighlighter.COLORS
         low = line.lower()
-        
+
         if any(word in low for word in ["critical", "crit"]):
-            return TextHighlighter.COLORS["critical"]
+            return palette["critical"]
         elif any(word in low for word in ["hit", "damage", "damage"]):
-            return TextHighlighter.COLORS["hit"]
+            return palette["hit"]
         elif any(word in low for word in ["miss", "fail", "graz", "evad"]):
-            return TextHighlighter.COLORS["miss"]
+            return palette["miss"]
         elif any(word in low for word in ["move", "position", "enter", "leave"]):
-            return TextHighlighter.COLORS["move"]
+            return palette["move"]
         elif any(word in low for word in ["skill", "feat", "ability"]):
-            return TextHighlighter.COLORS["skill"]
+            return palette["skill"]
         elif any(word in low for word in ["status", "effect", "condition"]):
-            return TextHighlighter.COLORS["status"]
-        
-        return TextHighlighter.COLORS["default"]
-    
+            return palette["status"]
+
+        return palette["default"]
+
     @staticmethod
-    def highlight_html(lines: list[str]) -> str:
+    def highlight_html(lines: list[str], dark: bool = False) -> str:
         """Convert plain text lines to colored HTML."""
         import html
-        
+
         html_lines = []
         for ln in lines:
-            color = TextHighlighter.get_color_for_line(ln)
+            color = TextHighlighter.get_color_for_line(ln, dark=dark)
             safe = html.escape(ln)
             html_lines.append(f"<div style='color:{color}; margin-bottom:3px; line-height:1.4;'>{safe}</div>")
-        
+
         return "".join(html_lines)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -10,7 +11,17 @@ from typing import Any, Dict
 
 
 CATALOG_VERSION = "1.0.0"
-CATALOG_ROOT = Path(__file__).resolve().parent.parent / "data" / "avalore" / "v1"
+
+
+def _catalog_root() -> Path:
+    """Locate data/avalore/v1 both in a checkout and a frozen (PyInstaller) app."""
+    if getattr(sys, "frozen", False):
+        bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        return bundle_root / "data" / "avalore" / "v1"
+    return Path(__file__).resolve().parent.parent / "data" / "avalore" / "v1"
+
+
+CATALOG_ROOT = _catalog_root()
 
 
 def _json_ready(value: Any) -> Any:

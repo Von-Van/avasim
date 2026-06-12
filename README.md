@@ -10,13 +10,13 @@ A desktop combat sandbox for the Avalore tabletop RPG. Build combatants, run AI 
 
 **Screenshots**
 
-![AvaSim desktop simulator](docs/screenshots/hero.svg)
+![Combat replay with decision math and the action log](docs/screenshots/combat-log.png)
 
-![Scenario builder](docs/screenshots/scenario-builder.svg)
+![Status panel after a duel: HP, armor, anima, and conditions](docs/screenshots/status-panel.png)
 
-![Combat replay and decision math](docs/screenshots/combat-log.svg)
+![Character setup with stats, skills, feats, and the spellbook](docs/screenshots/character-setup.png)
 
-Note: These images are placeholders for the portfolio landing page. Replace them with real screenshots from the app UI when available.
+Screenshots are captured from the real app (`python scripts/capture_screenshots.py`).
 
 **Key Features**
 
@@ -70,7 +70,16 @@ make benchmark-analysis
 
 **Packaging**
 
-A PyInstaller spec is available at `packaging/avasim.spec` with version metadata in `packaging/version.txt`.
+Desktop builds use PyInstaller (Windows-oriented version metadata in `packaging/version.txt`):
+
+```bash
+pip install pyinstaller
+pyinstaller packaging/avasim.spec
+```
+
+The spec bundles the versioned rule catalogs (`data/avalore/v1`), optional fantasy fonts
+(`ui/fonts`), and app assets; `combat/catalog.py` resolves catalog paths inside frozen
+bundles automatically.
 
 **Docs**
 

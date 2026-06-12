@@ -896,35 +896,37 @@ class MainWindow(QWidget):
         self.quickstart_setup = {
             "char1": {
                 "name": "Captain",
-                "hp": 28,
-                "anima": 2,
-                "max_anima": 4,
-                "stats": {"Strength": 2, "Dexterity": 1, "Intelligence": 0, "Vitality": 2},
+                "hp": 20,
+                "anima": 0,
+                "max_anima": 0,
+                "stats": {"Strength": 2, "Dexterity": 1, "Intelligence": 0, "Harmony": 1},
                 "skills": {
-                    "Strength": {"Athletics": 2, "Fortitude": 1, "Power": 1},
+                    "Strength": {"Athletics": 2, "Fortitude": 1, "Forging": 0},
                     "Dexterity": {"Acrobatics": 1, "Finesse": 1, "Stealth": 0},
-                    "Intelligence": {"Lore": 0, "Investigation": 0, "Insight": 0},
-                    "Vitality": {"Endurance": 2, "Discipline": 1, "Intimidation": 0},
+                    "Intelligence": {"Healing": 0, "Perception": 1, "Research": 0},
+                    "Harmony": {"Arcana": 0, "Nature": 0, "Belief": 1},
                 },
                 "hand1": "Arming Sword",
                 "hand2": "Small Shield",
                 "armor": "Medium Armor",
+                "feats": ["Shield Bash", "Second Wind"],
             },
             "char2": {
                 "name": "Brigand",
-                "hp": 24,
+                "hp": 20,
                 "anima": 0,
-                "max_anima": 2,
-                "stats": {"Strength": 1, "Dexterity": 2, "Intelligence": 0, "Vitality": 1},
+                "max_anima": 0,
+                "stats": {"Strength": 1, "Dexterity": 2, "Intelligence": 0, "Harmony": 0},
                 "skills": {
-                    "Strength": {"Athletics": 1, "Fortitude": 0, "Power": 0},
+                    "Strength": {"Athletics": 1, "Fortitude": 0, "Forging": 0},
                     "Dexterity": {"Acrobatics": 2, "Finesse": 2, "Stealth": 1},
-                    "Intelligence": {"Lore": 0, "Investigation": 0, "Insight": 0},
-                    "Vitality": {"Endurance": 1, "Discipline": 0, "Intimidation": 0},
+                    "Intelligence": {"Healing": 0, "Perception": 0, "Research": 0},
+                    "Harmony": {"Arcana": 0, "Nature": 0, "Belief": 0},
                 },
-                "hand1": "Spear",
+                "hand1": "Finesse Blade",
                 "hand2": "(None)",
                 "armor": "Light Armor",
+                "feats": ["Riposte", "Quickfooted"],
             },
             "mode": "Player controls both (Default)",
             "theme": "Light",
@@ -2163,8 +2165,9 @@ class MainWindow(QWidget):
         QMessageBox.information(self, "About AvaSim", "AvaSim Combat Sandbox\nWindows-friendly PySide6 desktop app for Avalore-inspired encounters.")
 
     def _render_action_log(self, lines: list[str]) -> str:
-        """Render action log with syntax highlighting."""
-        return TextHighlighter.highlight_html(lines)
+        """Render action log with theme-aware syntax highlighting."""
+        dark = self.theme_manager.current_theme == Theme.DARK
+        return TextHighlighter.highlight_html(lines, dark=dark)
 
     def _collapse_log_runs(self, lines: list[str]) -> list[str]:
         if not lines:

@@ -4,118 +4,72 @@
 
 ```
 avasim/
-├── combat/                 # Core combat simulation engine
-│   ├── __init__.py
-│   ├── engine.py          # Main combat engine
-│   ├── participant.py     # Character combat state
-│   ├── items.py           # Weapons, armor, shields
-│   ├── feats.py           # 30+ combat feats
-│   ├── spells.py          # Spellcasting mechanics
-│   ├── map.py             # Tactical grid system
-│   ├── dice.py            # 2d10 dice roller
-│   └── enums.py           # Game constants
+├── combat/                  # Core combat engine + analysis core (canonical)
+│   ├── engine.py            # Combat loop, attacks, maneuvers, spellcasting
+│   ├── participant.py       # Character combat state and action economy
+│   ├── items.py             # Weapons, armor, shields (+ improvised variants)
+│   ├── feats.py             # All 100 avalore.net feats (source of truth)
+│   ├── feat_handlers.py     # Typed feat-effect handlers dispatched by the engine
+│   ├── spells.py            # All 217 Grimoire spells + combat-mechanics overlay
+│   ├── ai.py                # EV-driven combat AI (attacks, feats, spellcasting)
+│   ├── map.py               # Tactical grid, pathfinding, line of sight
+│   ├── dice.py              # Seeded 2d10 dice (run-scoped RNG)
+│   ├── enums.py             # Range bands, statuses, terrain
+│   ├── contracts.py         # RunRequest/RunResult & batch/compare contracts
+│   ├── runtime.py           # Canonical run / run_batch / compare APIs
+│   ├── factory.py           # Build/scenario -> combat objects (no Qt)
+│   ├── validation.py        # Structured build/scenario validation
+│   ├── recorder.py          # Replay/event capture
+│   ├── events.py            # Structured event records
+│   ├── batch.py             # Monte Carlo batch aggregation
+│   └── catalog.py           # Versioned JSON catalog loader
 │
-├── ui/                     # Professional UI components
-│   ├── __init__.py        # Main UI module exports
-│   ├── theme.py           # Theming & styling system
-│   ├── animations.py      # Effects & feedback
-│   ├── components.py      # Reusable UI widgets
-│   └── map_widget.py      # Tactical map visualization
+├── data/avalore/v1/         # Versioned JSON rule catalogs (generated)
+├── docs/                    # Rules references, coverage matrix, catalogs
+├── scripts/                 # Scrapers, exporters, benchmarks, doc generators
+├── tests/data/              # Scraped source-of-truth fixtures (feats, spells)
+├── ui/                      # PySide6 widgets, theming, tactical map rendering
+├── packaging/               # PyInstaller spec + version metadata
 │
-├── avasim.py              # Character definition
-├── character.py           # Character sheet structure
-├── pyside_app.py          # Main desktop application
-├── examples.py            # Usage examples
-├── test_combat.py         # Unit tests (18 tests)
-├── test_tactical_map.py   # Map system tests
-└── requirements.txt       # Python dependencies
+├── apps/, services/,        # FROZEN experimental next-gen reference
+│   packages/, infra/        # (TS orchestrator, Rust engine, schema, Docker)
+│
+├── avasim.py                # Character model (stats, skills, XP)
+├── character.py             # Character sheet template structure
+├── pyside_app.py            # Desktop application entry point
+├── examples.py              # Character simulator usage examples
+├── test_*.py                # Test suite (197 tests)
+└── requirements.txt         # Python dependencies
 ```
 
-## Module Breakdown
+## Key Flows
 
-### Combat Module (`combat/`)
-Implements all Avalore RPG mechanics:
-- **engine.py**: Main combat simulation loop, action resolution
-- **participant.py**: Character state, action economy, HP tracking
-- **items.py**: All 21 weapons, armor types, shields
-- **feats.py**: 30+ feats with action costs and once-per-turn limits
-- **spells.py**: Spellcasting, anima costs, miscast mechanics
-- **map.py**: 10×10 grid, occupant tracking, distance calculations
-- **dice.py**: 2d10 system with critical/graze detection
-- **enums.py**: ActionType, DamageType, StatusEffect, etc.
-
-### UI Module (`ui/`)
-Professional PySide6 interface components:
-- **theme.py**: Dark/Light themes, color palettes, font system, icons
-- **animations.py**: Progress indicators, text highlighting, status badges
-- **components.py**: Reusable labeled widgets, buttons, group boxes
-- **map_widget.py**: Professional tactical map graphics, legend
-- **__init__.py**: Clean exports for easy importing
-
-### Root Level
-- **pyside_app.py**: Main application window, event handling
-- **avasim.py**: Character class definition
-- **character.py**: Character sheet template structure
-- **examples.py**: Combat scenario examples
-- **test_*.py**: Comprehensive unit tests
-- **requirements.txt**: Dependencies (PySide6, qtawesome, streamlit)
-
-## Import Patterns
-
-### Clean UI Imports
-```python
-from ui import (
-    Theme, ThemeManager,          # Theming
-    IconProvider, FontConfig,      # Design system
-    ProgressIndicator,             # Animations
-    TextHighlighter,               # Log formatting
-    TacticalMapWidget,             # Map visualization
-    LabeledComboBox, IconButton,   # Components
-)
-```
-
-### Combat Imports
-```python
-from combat import (
-    AvaCombatEngine,
-    CombatParticipant,
-    TacticalMap,
-)
-from combat.enums import ActionType, StatusEffect
-```
-
-## File Organization Benefits
-
-✅ **Logical Grouping**: Related code organized into modules  
-✅ **Easy Navigation**: Clear folder structure makes finding code simple  
-✅ **Reusability**: UI components can be reused across projects  
-✅ **Testability**: Isolated modules are easier to unit test  
-✅ **Maintainability**: Changes contained within module boundaries  
-✅ **Scalability**: New features easily added to appropriate modules  
-✅ **Clean Imports**: Main files import only what they need  
+- **Rules data**: live pages → `scripts/fetch_feats.py` / `fetch_spells.py` →
+  fixtures in `tests/data/` → literals in `combat/feats.py` / `combat/spells.py`
+  → `scripts/export_rule_catalogs.py` → `data/avalore/v1/*.json` (loaded at
+  runtime by `combat/catalog.py`).
+- **Analysis**: `combat.run` / `run_batch` / `compare` (see
+  `docs/analysis_core.md`) give deterministic, seed-stable results consumed by
+  the UI's batch and comparison tabs.
+- **Docs**: `docs/mechanics_reference.md` tracks rule coverage;
+  `docs/feats_catalog.md` and `docs/spells_catalog.md` are generated from the
+  catalogs.
 
 ## Adding New Features
 
-### New UI Component
-1. Add to `ui/components.py`
-2. Export in `ui/__init__.py`
-3. Import in `pyside_app.py`
+### New combat rule
+1. Ground it in the canonical pages (avalore.net/mechanics, /extended-mechanics,
+   /arcane, /grimoire, /feats)
+2. Implement in `combat/engine.py` / `combat/participant.py`
+3. Update the coverage matrix in `docs/mechanics_reference.md`
+4. Add tests (`test_combat.py`, `test_spellcasting.py`, `test_rules_fidelity.py`)
 
-### New Combat Feat
-1. Add to `combat/feats.py`
-2. Register in `combat/engine.py`
-3. Add tests to `test_combat.py`
+### New wired spell
+1. Add a `SPELL_MECHANICS` entry in `combat/spells.py` (note simplifications)
+2. Extend `engine._apply_spell_effects` only if new vocabulary is needed
+3. Re-run `scripts/export_rule_catalogs.py` and `scripts/generate_spells_doc.py`
+4. Add tests to `test_spellcasting.py`
 
-### New Map Feature
-1. Add to `combat/map.py` or `ui/map_widget.py`
-2. Update `TacticalMapWidget.draw_snapshot()` if visual
-3. Add tests to `test_tactical_map.py`
-
-## Deprecated Files
-The following files in the root directory are now superseded by the ui/ module:
-- `ui_theme.py` → `ui/theme.py`
-- `ui_animations.py` → `ui/animations.py`
-- `ui_components.py` → `ui/components.py`
-- `ui_map_widget.py` → `ui/map_widget.py`
-
-These can be safely deleted once you confirm everything works correctly.
+### New UI component
+1. Add to `ui/components.py`, export in `ui/__init__.py`
+2. Wire into `pyside_app.py`

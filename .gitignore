@@ -22,8 +22,12 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 ENV/
 env/
+
+# Runtime app settings (settings.json fallback directory)
+AvaSim/
 
 # IDE
 .vscode/
