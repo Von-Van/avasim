@@ -65,7 +65,7 @@ make benchmark-analysis
 
 **Project Status**
 
-- The PySide desktop app and Python combat engine are canonical.
+- The PySide desktop app and Python combat engine are canonical, and the analysis runtime contract is **stable** (see [docs/analysis_core.md](docs/analysis_core.md)).
 - The earlier multi-service experiment (TypeScript orchestrator, Rust service, Docker stack, schema package) is frozen reference work consolidated under [`archive/`](archive/README.md).
 - Spellcasting is fully enabled: the character editor has a spellbook (with primary discipline), the AI casts when a spell beats a weapon swing, and manual turns support Cast actions.
 - The focus is on reproducible analysis, rules fidelity, combat visualization, and AI transparency.

@@ -1,5 +1,13 @@
 # AvaSim Analysis Core
 
+> **Status: stable** (declared June 2026, catalog version 1.0.0). The request/result
+> contracts below, the versioned rule catalogs in `data/avalore/v1/`, and the
+> determinism guarantees are now the supported surface for any client — the
+> desktop UI, scripts, or a future game backend. Changes to them require a
+> catalog/contract version bump and a regression-tested migration. The contract
+> is backed by the full test suite (197 tests: baselines, catalogs parity,
+> mechanics, spellcasting, and rules fidelity).
+
 The canonical product runtime is the existing PySide desktop app plus the pure-Python combat engine in `combat/`.
 
 The analysis core adds a stable boundary for reproducible decision support without porting the working engine:
@@ -12,7 +20,7 @@ The analysis core adds a stable boundary for reproducible decision support witho
 
 Batch runs use summary capture by default to avoid replay/log overhead. Representative replay seeds are selected deterministically and rerun with replay capture when requested.
 
-The earlier service, TypeScript schema, Rust runtime, and container work remain frozen experimental reference material, consolidated under `archive/`. They should not receive new feature work until this Python runtime contract is stable and test-backed.
+The earlier service, TypeScript schema, Rust runtime, and container work remain frozen reference material, consolidated under `archive/`. The condition that froze them — a stable, test-backed Python runtime contract — is now met; resuming any port is a deliberate, separate decision, and any such work should target this contract rather than reinvent it.
 
 Static weapons, armor, shields, feats, and spells are exported to versioned JSON under `data/avalore/v1/`. The Python modules still expose the same constants (`AVALORE_WEAPONS`, `AVALORE_FEATS`, etc.), now loaded back into the existing dataclasses for compatibility.
 
