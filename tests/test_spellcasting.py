@@ -275,7 +275,7 @@ class TestWiredSpells(CastingBase):
         hp = ally.current_hp
         ally.take_damage(3, armor_piercing=True)
         taken = hp - ally.current_hp
-        self.assertLess(taken, 3)  # heavy armor soaks 1d4 despite the AP hit
+        self.assertLess(taken, 3)  # heavy armor soaks 1d3 despite the AP hit
 
     def test_acceleration_grants_extra_action_and_move(self):
         eng, caster, ally = self.duel(gap=4)

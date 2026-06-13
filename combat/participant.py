@@ -169,6 +169,8 @@ class CombatParticipant:
         base = min(3, self.character.get_modifier("Dexterity", "Acrobatics"))
         if self.armor:
             base += self.armor.evasion_penalty
+        # Spell wards and hexes (e.g. Blur grants a bonus; penalties are stored negative).
+        base += self.spell_evasion_bonus + self.spell_evasion_penalty
         if self.has_status(StatusEffect.SLOWED):
             base -= 2
         return base + self.physical_penalty() - self.mockery_penalty_total
@@ -210,6 +212,10 @@ class CombatParticipant:
 
     def get_stealth_modifier(self) -> int:
         base = self.character.get_modifier("Dexterity", "Stealth")
+        # Heavy armour: -3 to stealth rolls when moving; Hide/Conceal involve
+        # moving into or holding concealment, so the penalty applies there.
+        if self.armor:
+            base += self.armor.stealth_penalty
         if hasattr(self, 'engine') and self.engine and self.engine.tactical_map and hasattr(self, 'position'):
             ax, ay = self.position
             for p in self.engine.participants:
@@ -483,9 +489,13 @@ class CombatParticipant:
         if armor_piercing and self.ap_ward_rounds > 0:
             armor_piercing = False
         # Apply armor soak unless AP
-        if not armor_piercing and self.armor:
-            meets_req = self.armor.meets_requirements(self.character)
-            soak = self.armor.get_soak_value(meets_requirement=meets_req)
+        if not armor_piercing:
+            soak = 0
+            if self.armor:
+                meets_req = self.armor.meets_requirements(self.character)
+                soak = self.armor.get_soak_value(meets_requirement=meets_req)
+            # Soak wards (e.g. Shell) reinforce armour and protect even the unarmored.
+            soak += self.spell_soak_bonus
             amount = max(0, amount - soak)
         # Grazing hits and armor interaction
         if not bypass_graze and self.armor:

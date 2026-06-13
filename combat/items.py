@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 from .catalog import load_catalog
 from .enums import RangeCategory, ArmorCategory, ShieldType
-from .dice import roll_1d2, roll_1d4
+from .dice import roll_1d2, roll_1d3
 
 @dataclass
 class Weapon:
@@ -46,13 +46,12 @@ class Armor:
     description: str = ""
 
     def get_soak_value(self, meets_requirement: bool = True) -> int:
-        from .dice import roll_1d4
         if self.category == ArmorCategory.LIGHT:
             soak = max(0, roll_1d2() - 1)  # 1d2-1 (0 or 1)
         elif self.category == ArmorCategory.MEDIUM:
-            soak = max(0, roll_1d4() - 1)  # 1d4-1 (0 to 3)
+            soak = max(0, roll_1d3() - 1)  # 1d3-1 (0 to 2)
         elif self.category == ArmorCategory.HEAVY:
-            soak = roll_1d4()  # 1d4 (1 to 4)
+            soak = roll_1d3()  # 1d3 (1 to 3)
         else:
             soak = 0
         if not meets_requirement:
@@ -169,8 +168,8 @@ def make_improvised_shield(base: Shield) -> Shield:
 
 AVALORE_ARMOR = {
     "Light Armor": Armor(name="Light Armor", category=ArmorCategory.LIGHT, evasion_penalty=0, stealth_penalty=0, movement_penalty=0, stat_requirements={"Dexterity:Acrobatics": -1}, description="Leather or padded armor. 1d2-1 protection (0-1 soak), no penalties."),
-    "Medium Armor": Armor(name="Medium Armor", category=ArmorCategory.MEDIUM, evasion_penalty=-1, stealth_penalty=0, movement_penalty=0, stat_requirements={"Strength:Athletics": 1}, description="Chain, scale, breastplate. 1d4-1 protection (0-3 soak), -1 evasion. If not meeting requirement: -2 movement, -1 additional soak penalty."),
-    "Heavy Armor": Armor(name="Heavy Armor", category=ArmorCategory.HEAVY, evasion_penalty=-2, stealth_penalty=-3, movement_penalty=-2, stat_requirements={"Strength:Athletics": 3}, description="Full plate. 1d4 protection (1-4 soak), -2 evasion, -3 stealth, -2 movement. If not meeting requirement: -2 additional movement, -1 additional soak penalty."),
+    "Medium Armor": Armor(name="Medium Armor", category=ArmorCategory.MEDIUM, evasion_penalty=-1, stealth_penalty=0, movement_penalty=0, stat_requirements={"Strength:Athletics": 1}, description="Chain, scale, breastplate. 1d3-1 protection (0-2 soak), -1 evasion. If not meeting requirement: -2 movement, -1 additional soak penalty."),
+    "Heavy Armor": Armor(name="Heavy Armor", category=ArmorCategory.HEAVY, evasion_penalty=-2, stealth_penalty=-3, movement_penalty=-1, stat_requirements={"Strength:Athletics": 3}, description="Full plate. 1d3 protection (1-3 soak), -2 evasion, -3 stealth when moving, -1 movement. If not meeting requirement: -2 additional movement, -1 additional soak penalty."),
 }
 
 AVALORE_SHIELDS = {

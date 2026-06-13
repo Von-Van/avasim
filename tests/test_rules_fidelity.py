@@ -166,6 +166,59 @@ class TestSkewerFalloff(FidelityBase):
         self.assertEqual(d.current_hp, 16)  # full 4
 
 
+class TestArmorCanon(FidelityBase):
+    """Armour per avalore.net/armour: soak dice, penalties, and spell wards."""
+
+    def _soak_range(self, armor_name, samples=200):
+        from combat import AVALORE_ARMOR
+        armor = AVALORE_ARMOR[armor_name]
+        values = {armor.get_soak_value(meets_requirement=True) for _ in range(samples)}
+        return min(values), max(values)
+
+    def test_light_soak_is_1d2_minus_1(self):
+        self.assertEqual(self._soak_range("Light Armor"), (0, 1))
+
+    def test_medium_soak_is_1d3_minus_1(self):
+        self.assertEqual(self._soak_range("Medium Armor"), (0, 2))
+
+    def test_heavy_soak_is_1d3(self):
+        self.assertEqual(self._soak_range("Heavy Armor"), (1, 3))
+
+    def test_heavy_movement_penalty_is_one(self):
+        from combat import AVALORE_ARMOR
+        eng, a, d = self.duel(gap=10)
+        a.armor = AVALORE_ARMOR["Heavy Armor"]
+        a.character.base_skills["Strength"]["Athletics"] = 3  # meet requirements
+        a.start_turn()
+        self.assertTrue(eng.action_move(a, 0, 4))   # 5 - 1 = 4 blocks
+        a.free_move_used = False
+        self.assertFalse(eng.action_move(a, 0, 9))  # 5 more would exceed it
+
+    def test_heavy_armor_penalizes_stealth(self):
+        from combat import AVALORE_ARMOR
+        eng, a, d = self.duel()
+        bare = a.get_stealth_modifier()
+        a.armor = AVALORE_ARMOR["Heavy Armor"]
+        self.assertEqual(a.get_stealth_modifier(), bare - 3)
+
+    def test_soak_ward_reduces_damage_without_armor(self):
+        eng, a, d = self.duel()
+        a.spell_soak_bonus = 1  # e.g. Shell
+        taken = a.take_damage(3)
+        self.assertEqual(taken, 2)
+        # ...but never against armor-piercing damage.
+        taken_ap = a.take_damage(3, armor_piercing=True)
+        self.assertEqual(taken_ap, 3)
+
+    def test_evasion_ward_and_hex_change_evasion_rolls(self):
+        eng, a, d = self.duel()
+        base = a.get_evasion_modifier()
+        a.spell_evasion_bonus = 2   # e.g. Blur
+        self.assertEqual(a.get_evasion_modifier(), base + 2)
+        a.spell_evasion_penalty = -1
+        self.assertEqual(a.get_evasion_modifier(), base + 1)
+
+
 class TestImprovisedEquipment(FidelityBase):
     def test_improvised_weapon_penalties(self):
         sword = AVALORE_WEAPONS["Arming Sword"]
