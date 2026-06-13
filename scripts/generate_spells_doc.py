@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Render docs/spells_catalog.md from the runtime spell catalog.
 
-The catalog itself (combat/spells.py + data/avalore/v1/spells.json) is the
-source of truth; this script just formats it for human reading, mirroring
-docs/feats_catalog.md.
+The catalog itself (combat/spells.py) is the source of truth; this script just
+formats it for human reading, mirroring docs/feats_catalog.md.
 
 Usage::
 
@@ -40,9 +39,8 @@ def main() -> None:
     print(f"Every spell published in the Avalore Grimoire ({total} total:")
     print("<https://avalore.net/grimoire/> plus the six per-discipline pages).")
     print("This document is generated from the runtime catalog in")
-    print("[`combat/spells.py`](../combat/spells.py) (exported to")
-    print("`data/avalore/v1/spells.json`); the scraped source of truth lives in")
-    print("`tests/data/avalore_spells_source.json`.")
+    print("[`combat/spells.py`](../combat/spells.py); the scraped source of truth")
+    print("lives in `tests/data/avalore_spells_source.json`.")
     print()
     print("Regenerate the source with `python scripts/fetch_spells.py --emit json`,")
     print("the Python catalog with `python scripts/fetch_spells.py --emit python`,")

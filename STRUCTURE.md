@@ -21,10 +21,8 @@ avasim/
 │   ├── validation.py        # Structured build/scenario validation
 │   ├── recorder.py          # Replay/event capture
 │   ├── events.py            # Structured event records
-│   ├── batch.py             # Monte Carlo batch aggregation
-│   └── catalog.py           # Versioned JSON catalog loader
+│   └── batch.py             # Monte Carlo batch aggregation
 │
-├── data/avalore/v1/         # Versioned JSON rule catalogs (generated)
 ├── docs/                    # Coverage matrix, catalogs, analysis contract, screenshots
 ├── scripts/                 # Scrapers, exporters, benchmarks, doc generators
 ├── tests/                   # Test suite (197 tests), scraped fixtures, baselines
@@ -42,9 +40,8 @@ avasim/
 ## Key Flows
 
 - **Rules data**: live pages → `scripts/fetch_feats.py` / `fetch_spells.py` →
-  fixtures in `tests/data/` → literals in `combat/feats.py` / `combat/spells.py`
-  → `scripts/export_rule_catalogs.py` → `data/avalore/v1/*.json` (loaded at
-  runtime by `combat/catalog.py`).
+  fixtures in `tests/data/` → literals in `combat/feats.py` / `combat/spells.py`,
+  read directly by the engine as the single source of truth.
 - **Analysis**: `combat.run` / `run_batch` / `compare` (see
   `docs/analysis_core.md`) give deterministic, seed-stable results consumed by
   the UI's batch and comparison tabs.
@@ -64,7 +61,7 @@ avasim/
 ### New wired spell
 1. Add a `SPELL_MECHANICS` entry in `combat/spells.py` (note simplifications)
 2. Extend `engine._apply_spell_effects` only if new vocabulary is needed
-3. Re-run `scripts/export_rule_catalogs.py` and `scripts/generate_spells_doc.py`
+3. Re-run `scripts/generate_spells_doc.py` to refresh the spell document
 4. Add tests to `tests/test_spellcasting.py`
 
 ### New UI component

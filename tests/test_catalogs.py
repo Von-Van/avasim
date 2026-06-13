@@ -3,40 +3,13 @@ import unittest
 from pathlib import Path
 
 from combat import AVALORE_ARMOR, AVALORE_FEATS, AVALORE_SHIELDS, AVALORE_SPELLS, AVALORE_WEAPONS
-from combat.catalog import CATALOG_VERSION, load_catalog
 
 FEATS_SOURCE = Path(__file__).parent / "data" / "avalore_feats_source.json"
 SPELLS_SOURCE = Path(__file__).parent / "data" / "avalore_spells_source.json"
 
 
 class TestRuleCatalogs(unittest.TestCase):
-    def test_catalog_names_match_exported_constants(self):
-        self.assertEqual(
-            {entry["name"] for entry in load_catalog("weapons")["entries"]},
-            set(AVALORE_WEAPONS),
-        )
-        self.assertEqual(
-            {entry["name"] for entry in load_catalog("armor")["entries"]},
-            set(AVALORE_ARMOR),
-        )
-        self.assertEqual(
-            {entry["name"] for entry in load_catalog("shields")["entries"]},
-            set(AVALORE_SHIELDS),
-        )
-        self.assertEqual(
-            {entry["name"] for entry in load_catalog("feats")["entries"]},
-            set(AVALORE_FEATS),
-        )
-        self.assertEqual(
-            {entry["name"] for entry in load_catalog("spells")["entries"]},
-            set(AVALORE_SPELLS),
-        )
-
-    def test_catalog_version(self):
-        for name in ("weapons", "armor", "shields", "feats", "spells"):
-            self.assertEqual(load_catalog(name)["version"], CATALOG_VERSION)
-
-    def test_representative_loaded_values(self):
+    def test_representative_literal_values(self):
         self.assertEqual(AVALORE_WEAPONS["Arming Sword"].damage, 4)
         self.assertEqual(AVALORE_WEAPONS["Arming Sword"].range_category.value, "melee")
         self.assertEqual(AVALORE_ARMOR["Light Armor"].category.value, "light")

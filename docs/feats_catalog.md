@@ -3,7 +3,7 @@
 Every feat published at <https://avalore.net/feats> (100 total). This document is
 generated from the scraped source of truth in
 `tests/data/avalore_feats_source.json` and mirrors the runtime catalog in
-[`combat/feats.py`](../combat/feats.py) (exported to `data/avalore/v1/feats.json`).
+[`combat/feats.py`](../combat/feats.py).
 
 Regenerate the source with `python scripts/fetch_feats.py --emit json` and the
 Python catalog with `python scripts/fetch_feats.py --emit python`.

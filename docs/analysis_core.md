@@ -1,12 +1,11 @@
 # AvaSim Analysis Core
 
-> **Status: stable** (declared June 2026, catalog version 1.0.0). The request/result
-> contracts below, the versioned rule catalogs in `data/avalore/v1/`, and the
-> determinism guarantees are now the supported surface for any client — the
-> desktop UI, scripts, or a future game backend. Changes to them require a
-> catalog/contract version bump and a regression-tested migration. The contract
-> is backed by the full test suite (197 tests: baselines, catalogs parity,
-> mechanics, spellcasting, and rules fidelity).
+> **Status: stable.** The request/result contracts below and the determinism
+> guarantees are the supported surface for clients — the desktop UI and scripts
+> today. They carry explicit `SCHEMA_VERSION` / `ENGINE_VERSION` stamps
+> (`combat/contracts.py`), so a breaking change should bump those and stay
+> covered by the test suite (baselines, catalog coverage, mechanics,
+> spellcasting, and rules fidelity).
 
 The canonical product runtime is the existing PySide desktop app plus the pure-Python combat engine in `combat/`.
 
@@ -22,7 +21,7 @@ Batch runs use summary capture by default to avoid replay/log overhead. Represen
 
 The earlier service, TypeScript schema, Rust runtime, and container work remain frozen reference material, consolidated under `archive/`. The condition that froze them — a stable, test-backed Python runtime contract — is now met; resuming any port is a deliberate, separate decision, and any such work should target this contract rather than reinvent it.
 
-Static weapons, armor, shields, feats, and spells are exported to versioned JSON under `data/avalore/v1/`. The Python modules still expose the same constants (`AVALORE_WEAPONS`, `AVALORE_FEATS`, etc.), now loaded back into the existing dataclasses for compatibility.
+Static weapons, armor, shields, feats, and spells are defined as Python literals in `combat/items.py`, `combat/feats.py`, and `combat/spells.py` (`AVALORE_WEAPONS`, `AVALORE_FEATS`, etc.) and read directly by the engine as the single source of truth.
 
 ## Determinism
 
@@ -36,6 +35,5 @@ Static weapons, armor, shields, feats, and spells are exported to versioned JSON
 ```bash
 python3 -m unittest -v
 python scripts/benchmark_analysis.py --runs 1000
-python scripts/export_rule_catalogs.py
 make benchmark-analysis
 ```

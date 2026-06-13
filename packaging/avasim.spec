@@ -9,8 +9,6 @@ a = Analysis(
     pathex=[str(project_root)],
     binaries=[],
     datas=[
-        # Versioned rule catalogs loaded at runtime by combat/catalog.py.
-        (str(project_root / "data" / "avalore" / "v1"), "data/avalore/v1"),
         # Optional fantasy fonts (ui/theme.py falls back to system fonts).
         (str(project_root / "ui" / "fonts"), "ui/fonts"),
         # App icon/logo assets.

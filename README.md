@@ -53,13 +53,12 @@ make benchmark-analysis
 - `combat/contracts.py`: versioned analysis request/result dataclasses
 - `combat/runtime.py`: canonical `run`, `run_batch`, and `compare` APIs
 - `combat/factory.py`: pure build/scenario conversion without Qt widgets
-- `data/avalore/v1/`: versioned JSON catalogs for static rules data
 - `combat/engine.py`: core combat engine and turn resolution
 - `combat/participant.py`: character state and action economy tracking
 - `combat/items.py`: weapons, armor, shields, traits
-- `combat/feats.py`: all 100 feat definitions (source of truth; exported to `data/avalore/v1/feats.json`)
+- `combat/feats.py`: all 100 feat definitions (source of truth, read directly by the engine)
 - `combat/feat_handlers.py`: typed feat-effect handlers dispatched by the engine
-- `combat/spells.py`: all 217 Grimoire spells with the combat-mechanics overlay (source of truth; exported to `data/avalore/v1/spells.json`)
+- `combat/spells.py`: all 217 Grimoire spells with the combat-mechanics overlay (source of truth, read directly by the engine)
 - `ui/`: Qt widgets and tactical map rendering
 - `pyside_app.py`: desktop application entry point and UI wiring
 
@@ -79,9 +78,8 @@ pip install pyinstaller
 pyinstaller packaging/avasim.spec
 ```
 
-The spec bundles the versioned rule catalogs (`data/avalore/v1`), optional fantasy fonts
-(`ui/fonts`), and app assets; `combat/catalog.py` resolves catalog paths inside frozen
-bundles automatically.
+The spec bundles optional fantasy fonts (`ui/fonts`) and app assets. Rule data is
+compiled into the Python modules, so nothing extra needs to ship for it.
 
 **Docs**
 
@@ -92,10 +90,9 @@ Rules references and design notes live in `docs/`:
 - [`docs/spells_catalog.md`](docs/spells_catalog.md) — all 217 Grimoire spells by discipline and tier with engine-wired status
 - [`docs/analysis_core.md`](docs/analysis_core.md) — the current canonical analysis direction
 
-The feat and spell catalogs are the data in `combat/feats.py` / `combat/spells.py` (exported to
-`data/avalore/v1/`); refresh the scraped sources of truth with `python scripts/fetch_feats.py` and
-`python scripts/fetch_spells.py`, and regenerate the spell document with
-`python scripts/generate_spells_doc.py`.
+The feat and spell catalogs are the data in `combat/feats.py` / `combat/spells.py`; refresh the
+scraped sources of truth with `python scripts/fetch_feats.py` and `python scripts/fetch_spells.py`,
+and regenerate the spell document with `python scripts/generate_spells_doc.py`.
 
 **Credits**
 

@@ -3,9 +3,8 @@
 Every spell published in the Avalore Grimoire (217 total:
 <https://avalore.net/grimoire/> plus the six per-discipline pages).
 This document is generated from the runtime catalog in
-[`combat/spells.py`](../combat/spells.py) (exported to
-`data/avalore/v1/spells.json`); the scraped source of truth lives in
-`tests/data/avalore_spells_source.json`.
+[`combat/spells.py`](../combat/spells.py); the scraped source of truth
+lives in `tests/data/avalore_spells_source.json`.
 
 Regenerate the source with `python scripts/fetch_spells.py --emit json`,
 the Python catalog with `python scripts/fetch_spells.py --emit python`,
